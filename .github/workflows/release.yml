@@ -40,3 +40,76 @@ jobs:
             - 포함: 설치 파일(.exe/.msi), updater 메타데이터(latest.json), 서명 파일(.sig)
           releaseDraft: false
           includeUpdaterJson: true
+
+      - name: Generate and upload updater latest.json
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $releaseApi = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
+          $release = Invoke-RestMethod -Uri $releaseApi -Headers $headers -Method Get
+
+          $exeAsset = $release.assets |
+            Where-Object { $_.name -like "*setup.exe" -and $_.name -notlike "*.sig" } |
+            Select-Object -First 1
+
+          if (-not $exeAsset) {
+            throw "Could not find setup.exe asset in release $env:GITHUB_REF_NAME"
+          }
+
+          $sigAssetName = "$($exeAsset.name).sig"
+          $sigAsset = $release.assets |
+            Where-Object { $_.name -eq $sigAssetName } |
+            Select-Object -First 1
+
+          if (-not $sigAsset) {
+            throw "Could not find signature asset '$sigAssetName'"
+          }
+
+          $sigPath = Join-Path $env:RUNNER_TEMP $sigAssetName
+          Invoke-WebRequest -Uri $sigAsset.browser_download_url -Headers $headers -OutFile $sigPath
+          $signature = (Get-Content -Path $sigPath -Raw).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($signature)) {
+            throw "Signature file is empty for '$sigAssetName'"
+          }
+
+          $latestObject = [ordered]@{
+            version = $env:GITHUB_REF_NAME
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                url = $exeAsset.browser_download_url
+                signature = $signature
+              }
+            }
+          }
+
+          $latestPath = Join-Path $env:RUNNER_TEMP "latest.json"
+          $latestObject | ConvertTo-Json -Depth 6 | Set-Content -Path $latestPath -Encoding utf8
+
+          $existingLatest = $release.assets |
+            Where-Object { $_.name -eq "latest.json" } |
+            Select-Object -First 1
+
+          if ($existingLatest) {
+            $deleteUrl = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/assets/$($existingLatest.id)"
+            Invoke-RestMethod -Uri $deleteUrl -Headers $headers -Method Delete | Out-Null
+          }
+
+          $uploadUrl = ($release.upload_url -replace "\{\?name,label\}$", "") + "?name=latest.json"
+          $uploadHeaders = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "Content-Type" = "application/json"
+          }
+
+          Invoke-WebRequest -Uri $uploadUrl -Headers $uploadHeaders -Method Post -InFile $latestPath | Out-Null
+          Write-Host "Uploaded latest.json to release $env:GITHUB_REF_NAME"
