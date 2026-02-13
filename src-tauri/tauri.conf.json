@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "코너브랜드 - 회개와천국복음선교회",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.repentanceheaven.cornerbrand",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,8 +29,8 @@
     "shortDescription": "이미지/PDF에 코너 로고를 자동 삽입하는 Windows 데스크톱 앱",
     "longDescription": "코너브랜드는 이미지와 PDF 문서의 지정된 코너에 로고를 자동으로 삽입해 반복 작업을 줄이는 Windows용 도구입니다.",
     "resources": {
-      "../logo.png": "logo.png",
-      "../logo.webp": "logo.webp"
+      "../assets/logo.png": "logo.png",
+      "../assets/logo.webp": "logo.webp"
     },
     "windows": {
       "wix": {

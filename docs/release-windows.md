@@ -42,7 +42,7 @@ npm run tauri build
 
 - `npm run build` 성공
 - `src-tauri`에서 `cargo test` 성공
-- 기본/보조 스탬프 로고 확인: 루트 `logo.png`(기본), 루트 `logo.webp`(보조)
+- 기본/보조 스탬프 로고 확인: `assets/logo.png`(기본), `assets/logo.webp`(보조)
 - 프론트 헤더 아이콘 확인: `public/icon.png`
 - 리소스 번들 매핑 확인: `src-tauri/tauri.conf.json`의 `bundle.resources`
 - Windows 설치 언어 설정 확인 (WiX `ko-KR`)

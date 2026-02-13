@@ -20,8 +20,8 @@ npm run tauri dev
 
 ## 로고 파일
 
-- 기본 스탬프 로고: 루트 `logo.png` (기본)
-- 보조 스탬프 로고: 루트 `logo.webp` (fallback/호환용)
+- 기본 스탬프 로고: `assets/logo.png` (기본)
+- 보조 스탬프 로고: `assets/logo.webp` (fallback/호환용)
 - 프론트 헤더 아이콘: `public/icon.png`
 - 번들 포함 리소스 매핑: `src-tauri/tauri.conf.json`의 `bundle.resources`
 
