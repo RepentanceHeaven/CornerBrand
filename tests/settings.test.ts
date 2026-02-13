@@ -6,12 +6,16 @@ test("sanitizeSettings defaults invalid position and sizePercent", () => {
   const sanitized = sanitizeSettings({
     position: "center",
     sizePercent: "giant",
+    updateCheckOnLaunch: "yes",
+    updateCheckIntervalMins: "often",
     marginPercent: "not-a-number",
   });
 
   expect(sanitized).toEqual({
     position: DEFAULT_SETTINGS.position,
     sizePercent: DEFAULT_SETTINGS.sizePercent,
+    updateCheckOnLaunch: DEFAULT_SETTINGS.updateCheckOnLaunch,
+    updateCheckIntervalMins: DEFAULT_SETTINGS.updateCheckIntervalMins,
   });
   expect("marginPercent" in sanitized).toBe(false);
 });
@@ -31,4 +35,15 @@ test("sanitizeSettings converts legacy sizePreset to sizePercent", () => {
 test("sanitizeSettings uses 30 default sizePercent without legacy preset", () => {
   expect(sanitizeSettings({}).sizePercent).toBe(30);
   expect(sanitizeSettings({ sizePercent: Number.NaN }).sizePercent).toBe(30);
+});
+
+test("sanitizeSettings defaults and validates update-check settings", () => {
+  const defaults = sanitizeSettings({});
+  expect(defaults.updateCheckOnLaunch).toBe(true);
+  expect(defaults.updateCheckIntervalMins).toBe(60);
+
+  expect(sanitizeSettings({ updateCheckOnLaunch: false }).updateCheckOnLaunch).toBe(false);
+  expect(sanitizeSettings({ updateCheckIntervalMins: -1 }).updateCheckIntervalMins).toBe(0);
+  expect(sanitizeSettings({ updateCheckIntervalMins: 5.6 }).updateCheckIntervalMins).toBe(6);
+  expect(sanitizeSettings({ updateCheckIntervalMins: 5000 }).updateCheckIntervalMins).toBe(1440);
 });

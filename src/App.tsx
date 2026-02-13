@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles/app.css";
 import { strings } from "./ui/strings";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -35,10 +35,31 @@ type UpdateDownloadState = {
   totalBytes: number | null;
 };
 
+const UPDATE_LAST_CHECK_MS_KEY = "cornerbrand.update.lastCheckMs";
+
+function getLastUpdateCheckMs(): number | null {
+  try {
+    const raw = localStorage.getItem(UPDATE_LAST_CHECK_MS_KEY);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setLastUpdateCheckMs(value: number): void {
+  try {
+    localStorage.setItem(UPDATE_LAST_CHECK_MS_KEY, String(value));
+  } catch {
+    // ignore storage failures
+  }
+}
+
 function App() {
   const [logoOk, setLogoOk] = useState(true);
   const [headerIconSrc, setHeaderIconSrc] = useState("/icon.png");
-  const [settings, setSettings] = useState<CornerBrandSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<CornerBrandSettings>(() => loadSettings());
   const [customLogoPath, setCustomLogoPath] = useState<string | null>(null);
   const [customOutputDir, setCustomOutputDir] = useState<string | null>(null);
 
@@ -59,10 +80,6 @@ function App() {
   });
 
   useEffect(() => {
-    setSettings(loadSettings());
-  }, []);
-
-  useEffect(() => {
     saveSettings(settings);
   }, [settings]);
 
@@ -71,82 +88,94 @@ function App() {
     updateCheckStartedRef.current = true;
 
     (async () => {
-      try {
-        const update = await check();
-        if (!update) return;
+        if (!settings.updateCheckOnLaunch) return;
 
-        const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
-        const notes =
-          plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
-        const shouldInstall = window.confirm(
-          strings.updateConfirm
-            .replace("{version}", update.version)
-            .replace("{notes}", notes),
-        );
-
-        if (!shouldInstall) {
-          await update.close();
-          return;
+        const intervalMins = Math.max(0, Math.round(settings.updateCheckIntervalMins));
+        if (intervalMins > 0) {
+          const lastCheckMs = getLastUpdateCheckMs();
+          const elapsedMs = lastCheckMs === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheckMs;
+          const intervalMs = intervalMins * 60 * 1000;
+          if (elapsedMs < intervalMs) return;
         }
 
-        let downloadedBytes = 0;
-        let totalBytes: number | null = null;
-        setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
+        setLastUpdateCheckMs(Date.now());
 
-        await update.downloadAndInstall((progress) => {
-          if (progress.event === "Started") {
-            const rawTotal = Number(progress.data.contentLength);
-            totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
-            downloadedBytes = 0;
-            setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
-            return;
-          }
+        try {
+          const update = await check();
+          if (!update) return;
 
-          if (progress.event === "Progress") {
-            const chunkLength = Number(progress.data.chunkLength);
-            if (Number.isFinite(chunkLength) && chunkLength > 0) {
-              downloadedBytes += chunkLength;
-            }
+          try {
+            const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
+            const notes =
+              plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
+            const shouldInstall = await confirm(
+              strings.updateConfirm
+                .replace("{version}", update.version)
+                .replace("{notes}", notes),
+            );
 
-            const percent = totalBytes
-              ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
-              : null;
+            if (!shouldInstall) return;
 
-            setUpdateDownload({
-              active: true,
-              percent,
-              downloadedBytes,
-              totalBytes,
+            let downloadedBytes = 0;
+            let totalBytes: number | null = null;
+            setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
+
+            await update.downloadAndInstall((progress) => {
+              if (progress.event === "Started") {
+                const rawTotal = Number(progress.data.contentLength);
+                totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
+                downloadedBytes = 0;
+                setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
+                return;
+              }
+
+              if (progress.event === "Progress") {
+                const chunkLength = Number(progress.data.chunkLength);
+                if (Number.isFinite(chunkLength) && chunkLength > 0) {
+                  downloadedBytes += chunkLength;
+                }
+
+                const percent = totalBytes
+                  ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
+                  : null;
+
+                setUpdateDownload({
+                  active: true,
+                  percent,
+                  downloadedBytes,
+                  totalBytes,
+                });
+                return;
+              }
+
+              if (progress.event === "Finished") {
+                setUpdateDownload((prev) => ({
+                  active: true,
+                  percent: prev.totalBytes ? 100 : prev.percent,
+                  downloadedBytes: prev.downloadedBytes,
+                  totalBytes: prev.totalBytes,
+                }));
+              }
             });
-            return;
-          }
 
-          if (progress.event === "Finished") {
             setUpdateDownload((prev) => ({
-              active: true,
-              percent: prev.totalBytes ? 100 : prev.percent,
-              downloadedBytes: prev.downloadedBytes,
-              totalBytes: prev.totalBytes,
+              ...prev,
+              active: false,
+              percent: prev.percent ?? 100,
             }));
+            await message(strings.updateInstalled);
+          } finally {
+            await update.close();
           }
-        });
-
-        setUpdateDownload((prev) => ({
-          ...prev,
-          active: false,
-          percent: prev.percent ?? 100,
-        }));
-        window.alert(strings.updateInstalled);
-        await update.close();
-      } catch {
-        if (import.meta.env.DEV) {
-          setNotice((prev) => prev ?? strings.updateCheckFailed);
+        } catch {
+          if (import.meta.env.DEV) {
+            setNotice((prev) => prev ?? strings.updateCheckFailed);
         }
       }
     })();
   }, []);
 
-  const { position, sizePercent } = settings;
+  const { position, sizePercent, updateCheckOnLaunch, updateCheckIntervalMins } = settings;
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -600,6 +629,51 @@ function App() {
                 />
                 <div className="cb-note" style={{ marginTop: 8 }}>
                   현재 선택: {sizePercent}%
+                </div>
+              </div>
+
+              <div className="cb-field">
+                <label htmlFor="cb-update-check-on-launch" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    id="cb-update-check-on-launch"
+                    type="checkbox"
+                    checked={updateCheckOnLaunch}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        updateCheckOnLaunch: e.currentTarget.checked,
+                      }))
+                    }
+                  />
+                  <span>{strings.updateCheckOnLaunchLabel}</span>
+                </label>
+                <div className="cb-note" style={{ marginTop: 8 }}>
+                  {strings.updateCheckOnLaunchHelp}
+                </div>
+              </div>
+
+              <div className="cb-field">
+                <label htmlFor="cb-update-check-interval">{strings.updateCheckIntervalLabel}</label>
+                <input
+                  id="cb-update-check-interval"
+                  className="cb-select"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  step={1}
+                  value={updateCheckIntervalMins}
+                  onChange={(e) => {
+                    const nextIntervalMins = Number(e.currentTarget.value);
+                    setSettings((prev) => ({
+                      ...prev,
+                      updateCheckIntervalMins: Number.isFinite(nextIntervalMins)
+                        ? Math.min(1440, Math.max(0, Math.round(nextIntervalMins)))
+                        : 0,
+                    }));
+                  }}
+                />
+                <div className="cb-note" style={{ marginTop: 8 }}>
+                  {strings.updateCheckIntervalHelp}
                 </div>
               </div>
 

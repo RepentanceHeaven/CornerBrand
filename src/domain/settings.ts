@@ -3,11 +3,15 @@ export type Position = "좌상단" | "우상단" | "좌하단" | "우하단";
 export type CornerBrandSettings = {
   position: Position;
   sizePercent: number;
+  updateCheckOnLaunch: boolean;
+  updateCheckIntervalMins: number;
 };
 
 export const DEFAULT_SETTINGS: CornerBrandSettings = {
   position: "우하단",
   sizePercent: 30,
+  updateCheckOnLaunch: true,
+  updateCheckIntervalMins: 60,
 };
 
 const STORAGE_KEY = "cornerbrand.settings.v1";
@@ -18,6 +22,10 @@ function isPosition(value: unknown): value is Position {
 
 function clampSizePercent(value: number): number {
   return Math.min(50, Math.max(1, value));
+}
+
+function clampUpdateCheckIntervalMins(value: number): number {
+  return Math.min(1440, Math.max(0, value));
 }
 
 function getLegacySizePercent(value: unknown): number | null {
@@ -33,11 +41,21 @@ export function sanitizeSettings(input: unknown): CornerBrandSettings {
     typeof obj.sizePercent === "number" && Number.isFinite(obj.sizePercent)
       ? clampSizePercent(Math.round(obj.sizePercent))
       : null;
+  const updateCheckIntervalMinsFromInput =
+    typeof obj.updateCheckIntervalMins === "number" && Number.isFinite(obj.updateCheckIntervalMins)
+      ? clampUpdateCheckIntervalMins(Math.round(obj.updateCheckIntervalMins))
+      : null;
   const legacySizePercent = getLegacySizePercent(obj.sizePreset);
 
   return {
     position: isPosition(obj.position) ? obj.position : DEFAULT_SETTINGS.position,
     sizePercent: sizePercentFromInput ?? legacySizePercent ?? DEFAULT_SETTINGS.sizePercent,
+    updateCheckOnLaunch:
+      typeof obj.updateCheckOnLaunch === "boolean"
+        ? obj.updateCheckOnLaunch
+        : DEFAULT_SETTINGS.updateCheckOnLaunch,
+    updateCheckIntervalMins:
+      updateCheckIntervalMinsFromInput ?? DEFAULT_SETTINGS.updateCheckIntervalMins,
   };
 }
 

@@ -4,6 +4,8 @@
 
 - `https://github.com/RepentanceHeaven/CornerBrand/releases/latest/download/latest.json`
 
+서명 키 백업/로테이션 절차는 `docs/signing-keys.md`를 참고하세요.
+
 `src-tauri/tauri.conf.json`의 updater 설정(`plugins.updater.endpoints`)과 동일해야 하며, 릴리즈 자동화 워크플로(`.github/workflows/release.yml`)도 이 구조를 기준으로 동작합니다.
 
 ## 1) 서명 키 준비

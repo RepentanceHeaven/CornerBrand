@@ -38,8 +38,65 @@ jobs:
           releaseBody: |
             태그 푸시로 자동 공개된 Windows 릴리즈입니다.
             - 포함: 설치 파일(.exe/.msi), updater 메타데이터(latest.json), 서명 파일(.sig)
+          generateReleaseNotes: true
           releaseDraft: false
           includeUpdaterJson: true
+
+      - name: Generate and upload checksums.txt
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $releaseApi = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
+          $release = Invoke-RestMethod -Uri $releaseApi -Headers $headers -Method Get
+
+          $installerAssets = $release.assets |
+            Where-Object {
+              ($_.name -like "*_x64-setup.exe" -or $_.name -like "*_x64_*.msi") -and $_.name -notlike "*.sig"
+            } |
+            Sort-Object -Property name
+
+          if (-not $installerAssets -or $installerAssets.Count -eq 0) {
+            throw "Could not find installer assets in release $env:GITHUB_REF_NAME"
+          }
+
+          $checksumsPath = Join-Path $env:RUNNER_TEMP "checksums.txt"
+          if (Test-Path $checksumsPath) {
+            Remove-Item -Path $checksumsPath -Force
+          }
+
+          foreach ($asset in $installerAssets) {
+            $assetPath = Join-Path $env:RUNNER_TEMP $asset.name
+            Invoke-WebRequest -Uri $asset.browser_download_url -Headers $headers -OutFile $assetPath
+            $hash = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Add-Content -Path $checksumsPath -Value "$hash  $($asset.name)"
+          }
+
+          $existingChecksums = $release.assets |
+            Where-Object { $_.name -eq "checksums.txt" } |
+            Select-Object -First 1
+
+          if ($existingChecksums) {
+            $deleteUrl = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/assets/$($existingChecksums.id)"
+            Invoke-RestMethod -Uri $deleteUrl -Headers $headers -Method Delete | Out-Null
+          }
+
+          $uploadUrl = ($release.upload_url -replace "\{\?name,label\}$", "") + "?name=checksums.txt"
+          $uploadHeaders = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "Content-Type" = "text/plain"
+          }
+
+          Invoke-WebRequest -Uri $uploadUrl -Headers $uploadHeaders -Method Post -InFile $checksumsPath | Out-Null
+          Write-Host "Uploaded checksums.txt with $($installerAssets.Count) entries"
 
       - name: Generate and upload updater latest.json
         shell: pwsh
@@ -55,9 +112,20 @@ jobs:
           $releaseApi = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
           $release = Invoke-RestMethod -Uri $releaseApi -Headers $headers -Method Get
 
-          $exeAsset = $release.assets |
-            Where-Object { $_.name -like "*setup.exe" -and $_.name -notlike "*.sig" } |
+          $preferredExeAsset = $release.assets |
+            Where-Object { $_.name -like "CornerBrand_*_x64-setup.exe" -and $_.name -notlike "*.sig" } |
+            Sort-Object -Property name |
             Select-Object -First 1
+
+          $fallbackExeAsset = $release.assets |
+            Where-Object { $_.name -like "*_x64-setup.exe" -and $_.name -notlike "*.sig" } |
+            Sort-Object -Property name |
+            Select-Object -First 1
+
+          $exeAsset = $preferredExeAsset
+          if (-not $exeAsset) {
+            $exeAsset = $fallbackExeAsset
+          }
 
           if (-not $exeAsset) {
             throw "Could not find setup.exe asset in release $env:GITHUB_REF_NAME"
