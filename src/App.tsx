@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles/app.css";
 import { strings } from "./ui/strings";
 import { open } from "@tauri-apps/plugin-dialog";
+import { check } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { addPathsUnique, type InputFile } from "./domain/inputFiles";
@@ -27,6 +28,13 @@ type BatchProgressEvent = {
   ok: boolean;
 };
 
+type UpdateDownloadState = {
+  active: boolean;
+  percent: number | null;
+  downloadedBytes: number | null;
+  totalBytes: number | null;
+};
+
 function App() {
   const [logoOk, setLogoOk] = useState(true);
   const [headerIconSrc, setHeaderIconSrc] = useState("/icon.png");
@@ -42,6 +50,13 @@ function App() {
   const [progressFileName, setProgressFileName] = useState<string | null>(null);
   const [results, setResults] = useState<StampFileResult[]>([]);
   const activeRequestIdRef = useRef<string | null>(null);
+  const updateCheckStartedRef = useRef(false);
+  const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState>({
+    active: false,
+    percent: null,
+    downloadedBytes: null,
+    totalBytes: null,
+  });
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -50,6 +65,86 @@ function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (updateCheckStartedRef.current) return;
+    updateCheckStartedRef.current = true;
+
+    (async () => {
+      try {
+        const update = await check();
+        if (!update) return;
+
+        const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
+        const notes =
+          plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
+        const shouldInstall = window.confirm(
+          strings.updateConfirm
+            .replace("{version}", update.version)
+            .replace("{notes}", notes),
+        );
+
+        if (!shouldInstall) {
+          await update.close();
+          return;
+        }
+
+        let downloadedBytes = 0;
+        let totalBytes: number | null = null;
+        setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
+
+        await update.downloadAndInstall((progress) => {
+          if (progress.event === "Started") {
+            const rawTotal = Number(progress.data.contentLength);
+            totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
+            downloadedBytes = 0;
+            setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
+            return;
+          }
+
+          if (progress.event === "Progress") {
+            const chunkLength = Number(progress.data.chunkLength);
+            if (Number.isFinite(chunkLength) && chunkLength > 0) {
+              downloadedBytes += chunkLength;
+            }
+
+            const percent = totalBytes
+              ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
+              : null;
+
+            setUpdateDownload({
+              active: true,
+              percent,
+              downloadedBytes,
+              totalBytes,
+            });
+            return;
+          }
+
+          if (progress.event === "Finished") {
+            setUpdateDownload((prev) => ({
+              active: true,
+              percent: prev.totalBytes ? 100 : prev.percent,
+              downloadedBytes: prev.downloadedBytes,
+              totalBytes: prev.totalBytes,
+            }));
+          }
+        });
+
+        setUpdateDownload((prev) => ({
+          ...prev,
+          active: false,
+          percent: prev.percent ?? 100,
+        }));
+        window.alert(strings.updateInstalled);
+        await update.close();
+      } catch {
+        if (import.meta.env.DEV) {
+          setNotice((prev) => prev ?? strings.updateCheckFailed);
+        }
+      }
+    })();
+  }, []);
 
   const { position, sizePercent } = settings;
 
@@ -270,6 +365,34 @@ function App() {
             >
               {isProcessing ? strings.processing : strings.run}
             </button>
+            {updateDownload.active ? (
+              <div
+                className="cb-note"
+                style={{
+                  marginTop: 8,
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  border: "1px solid var(--cb-line)",
+                  background: "var(--cb-panel)",
+                  maxWidth: 280,
+                }}
+              >
+                <div>{strings.updateDownloading}</div>
+                <div>
+                  {updateDownload.percent !== null
+                    ? `${strings.updatePercentPrefix} ${updateDownload.percent}%`
+                    : strings.updatePercentUnknown}
+                </div>
+                {updateDownload.downloadedBytes !== null ? (
+                  <div>
+                    {strings.updateBytesPrefix} {updateDownload.downloadedBytes.toLocaleString()}
+                    {updateDownload.totalBytes
+                      ? ` / ${updateDownload.totalBytes.toLocaleString()} ${strings.updateBytesUnit}`
+                      : ` ${strings.updateBytesUnit}`}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </header>
 

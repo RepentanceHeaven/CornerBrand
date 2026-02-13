@@ -2,6 +2,8 @@
 
 이 문서는 CornerBrand의 Windows 배포 파일을 만들고, GitHub에 업로드할 때의 기준을 정리합니다.
 
+자동 업데이트(Updater) 전용 설정/배포 절차는 `docs/auto-update.md`를 함께 참고하세요.
+
 ## 1) 사전 준비
 
 - Node.js LTS, npm

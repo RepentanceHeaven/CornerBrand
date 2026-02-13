@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "Repentance Heaven Gospel Mission",
     "shortDescription": "이미지/PDF에 코너 로고를 자동 삽입하는 Windows 데스크톱 앱",
     "longDescription": "코너브랜드는 이미지와 PDF 문서의 지정된 코너에 로고를 자동으로 삽입해 반복 작업을 줄이는 Windows용 도구입니다.",
@@ -51,5 +52,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyQjA4OTk2M0VEQTZEMzkKUldRNWJkbytsb213TWtBSy9PNlVmMFBvdjFEWTZHUjJGLy80KzBTcWVObm5wN3g5K2lFSHYrY08K",
+      "endpoints": [
+        "https://github.com/RepentanceHeaven/CornerBrand/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
