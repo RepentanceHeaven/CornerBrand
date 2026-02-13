@@ -29,7 +29,7 @@ Updater 아티팩트(`latest.json`, `.sig`) 생성을 위해 서명 키가 필�
 2. 변경사항 커밋 후 원격 저장소에 푸시
 3. 릴리즈 태그 생성/푸시 (`vX.Y.Z` 형식)
    - 예: `v0.2.0`
-4. GitHub Actions가 Windows 빌드를 수행하고 Draft Release를 생성
+4. GitHub Actions가 Windows 빌드를 수행하고 Public Release를 자동 공개
 
 ## 3) 워크플로 결과물
 
@@ -39,4 +39,5 @@ Updater 아티팩트(`latest.json`, `.sig`) 생성을 위해 서명 키가 필�
 - Updater 메타데이터 (`latest.json`)
 - Updater 서명 파일 (`.sig`)
 
-생성된 Draft Release에서 아티팩트 업로드 상태를 확인한 뒤, 검증 완료 시 Publish하면 앱의 자동 업데이트가 `latest.json` 기준으로 배포됩니다.
+즉, `vX.Y.Z` 태그만 푸시하면 GitHub Actions가 공개 릴리즈를 자동으로 만들고, 설치 파일(`.exe`, `.msi`)과 `latest.json`, `.sig`까지 함께 게시됩니다.
+앱의 자동 업데이트는 공개된 릴리즈의 `latest.json`을 기준으로 배포됩니다.
