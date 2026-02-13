@@ -55,7 +55,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyQjA4OTk2M0VEQTZEMzkKUldRNWJkbytsb213TWtBSy9PNlVmMFBvdjFEWTZHUjJGLy80KzBTcWVObm5wN3g5K2lFSHYrY08K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU0RTlGRjQ2NDZBQkFCNEYKUldSUHE2dEdSdi9wVlBRTzA1QzhwWVFwVlVObEFqUnZrYXdHTXlFcGhrVkpBQUY2WElJcFgwWFcK",
       "endpoints": [
         "https://github.com/RepentanceHeaven/CornerBrand/releases/latest/download/latest.json"
       ]
