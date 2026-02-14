@@ -1,20 +1,21 @@
 :root {
-  --cb-bg0: #fbf7ef;
-  --cb-bg1: #f3efe4;
-  --cb-surface: rgba(255, 255, 255, 0.72);
-  --cb-surface-strong: rgba(255, 255, 255, 0.92);
-  --cb-ink: #1b1b16;
-  --cb-ink-2: rgba(27, 27, 22, 0.72);
-  --cb-border: rgba(27, 27, 22, 0.12);
-  --cb-border-strong: rgba(27, 27, 22, 0.18);
+  --cb-bg0: #0d1116;
+  --cb-bg1: #121923;
+  --cb-surface: rgba(20, 28, 39, 0.78);
+  --cb-surface-strong: rgba(25, 34, 47, 0.92);
+  --cb-ink: #edf3fb;
+  --cb-ink-1: #f5f8ff;
+  --cb-ink-2: rgba(219, 229, 243, 0.72);
+  --cb-border: rgba(197, 215, 236, 0.16);
+  --cb-border-strong: rgba(197, 215, 236, 0.24);
 
-  --cb-accent: #0f3d5b;
-  --cb-accent-2: #1c6e8c;
-  --cb-danger: #9b2c2c;
+  --cb-accent: #4f9dcc;
+  --cb-accent-2: #63c1d6;
+  --cb-danger: #ff8f8f;
 
   --cb-r: 16px;
   --cb-r-sm: 12px;
-  --cb-shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
+  --cb-shadow: 0 20px 46px rgba(1, 4, 10, 0.52);
 
   --cb-font-sans: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo",
     "Malgun Gothic", sans-serif;
@@ -35,8 +36,8 @@ body {
   font-family: var(--cb-font-sans);
   color: var(--cb-ink);
   background:
-    radial-gradient(1100px 600px at 15% 10%, rgba(15, 61, 91, 0.09), rgba(0, 0, 0, 0)),
-    radial-gradient(900px 520px at 85% 22%, rgba(28, 110, 140, 0.08), rgba(0, 0, 0, 0)),
+    radial-gradient(1100px 600px at 15% 10%, rgba(79, 157, 204, 0.22), rgba(0, 0, 0, 0)),
+    radial-gradient(900px 520px at 85% 22%, rgba(99, 193, 214, 0.16), rgba(0, 0, 0, 0)),
     linear-gradient(180deg, var(--cb-bg0), var(--cb-bg1));
 }
 
@@ -51,7 +52,7 @@ select {
 }
 
 :focus-visible {
-  outline: 2px solid rgba(15, 61, 91, 0.55);
+  outline: 2px solid rgba(99, 193, 214, 0.75);
   outline-offset: 2px;
 }
 
@@ -86,9 +87,9 @@ select {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--cb-danger);
-  background: rgba(155, 44, 44, 0.08);
+  background: rgba(255, 143, 143, 0.12);
   border-radius: 12px;
-  border: 1px solid rgba(155, 44, 44, 0.2);
+  border: 1px solid rgba(255, 143, 143, 0.35);
   padding: 12px;
   font-family: var(--cb-font-sans);
 }
