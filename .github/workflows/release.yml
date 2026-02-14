@@ -181,3 +181,47 @@ jobs:
 
           Invoke-WebRequest -Uri $uploadUrl -Headers $uploadHeaders -Method Post -InFile $latestPath | Out-Null
           Write-Host "Uploaded latest.json to release $env:GITHUB_REF_NAME"
+
+          $updaterTag = "updater"
+          $updaterReleaseApi = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$updaterTag"
+
+          try {
+            $updaterRelease = Invoke-RestMethod -Uri $updaterReleaseApi -Headers $headers -Method Get
+          }
+          catch {
+            $statusCode = $_.Exception.Response.StatusCode.value__
+            if ($statusCode -ne 404) {
+              throw
+            }
+
+            $createReleaseApi = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases"
+            $createReleaseBody = @{
+              tag_name = $updaterTag
+              target_commitish = $env:GITHUB_SHA
+              name = "CornerBrand updater"
+              draft = $false
+              prerelease = $false
+            } | ConvertTo-Json
+
+            $updaterRelease = Invoke-RestMethod -Uri $createReleaseApi -Headers $headers -Method Post -Body $createReleaseBody -ContentType "application/json"
+          }
+
+          $updaterExistingLatest = $updaterRelease.assets |
+            Where-Object { $_.name -eq "latest.json" } |
+            Select-Object -First 1
+
+          if ($updaterExistingLatest) {
+            $deleteUrl = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/assets/$($updaterExistingLatest.id)"
+            Invoke-RestMethod -Uri $deleteUrl -Headers $headers -Method Delete | Out-Null
+          }
+
+          $updaterUploadUrl = ($updaterRelease.upload_url -replace "\{\?name,label\}$", "") + "?name=latest.json"
+          $updaterUploadHeaders = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "Content-Type" = "application/json"
+          }
+
+          Invoke-WebRequest -Uri $updaterUploadUrl -Headers $updaterUploadHeaders -Method Post -InFile $latestPath | Out-Null
+          Write-Host "Uploaded latest.json to release $updaterTag"

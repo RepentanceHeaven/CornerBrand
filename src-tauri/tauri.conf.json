@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CornerBrand",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "com.repentanceheaven.cornerbrand",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -59,6 +59,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREQ0Q5NTNCNjBBMEMzRUIKUldUcnc2QmdPNVhOM1d5ODNXNFNLQndZTmNqdGVlMmJCb3Nsa0FwZ1UzRUpwQVBRUWxWVW1YZU8K",
       "endpoints": [
+        "https://github.com/RepentanceHeaven/CornerBrand/releases/download/updater/latest.json",
         "https://github.com/RepentanceHeaven/CornerBrand/releases/latest/download/latest.json"
       ]
     }
