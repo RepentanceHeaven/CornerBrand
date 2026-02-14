@@ -40,27 +40,7 @@ type NoticeState = {
   message: string;
 };
 
-const UPDATE_LAST_CHECK_MS_KEY = "cornerbrand.update.lastCheckMs";
 const UPDATE_TOAST_ROLE = "status";
-
-function getLastUpdateCheckMs(): number | null {
-  try {
-    const raw = localStorage.getItem(UPDATE_LAST_CHECK_MS_KEY);
-    if (!raw) return null;
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function setLastUpdateCheckMs(value: number): void {
-  try {
-    localStorage.setItem(UPDATE_LAST_CHECK_MS_KEY, String(value));
-  } catch {
-    // ignore storage failures
-  }
-}
 
 function App() {
   const [logoOk, setLogoOk] = useState(true);
@@ -94,92 +74,84 @@ function App() {
     updateCheckStartedRef.current = true;
 
     (async () => {
-        if (!settings.updateCheckOnLaunch) return;
+      const isTauriRuntime =
+        typeof window !== "undefined" &&
+        ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+      if (!isTauriRuntime) return;
+      let update: Awaited<ReturnType<typeof check>> | null = null;
 
-        const intervalMins = Math.max(0, Math.round(settings.updateCheckIntervalMins));
-        if (intervalMins > 0) {
-          const lastCheckMs = getLastUpdateCheckMs();
-          const elapsedMs = lastCheckMs === null ? Number.POSITIVE_INFINITY : Date.now() - lastCheckMs;
-          const intervalMs = intervalMins * 60 * 1000;
-          if (elapsedMs < intervalMs) return;
-        }
+      try {
+        update = await check();
+        if (!update) return;
 
-        setLastUpdateCheckMs(Date.now());
+        const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
+        const notes =
+          plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
+        const shouldInstall = await confirm(
+          strings.updateConfirm
+            .replace("{version}", update.version)
+            .replace("{notes}", notes),
+        );
 
-        try {
-          const update = await check();
-          if (!update) return;
+        if (!shouldInstall) return;
 
-          try {
-            const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
-            const notes =
-              plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
-            const shouldInstall = await confirm(
-              strings.updateConfirm
-                .replace("{version}", update.version)
-                .replace("{notes}", notes),
-            );
+        let downloadedBytes = 0;
+        let totalBytes: number | null = null;
+        setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
 
-            if (!shouldInstall) return;
-
-            let downloadedBytes = 0;
-            let totalBytes: number | null = null;
-            setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
-
-            await update.downloadAndInstall((progress) => {
-              if (progress.event === "Started") {
-                const rawTotal = Number(progress.data.contentLength);
-                totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
-                downloadedBytes = 0;
-                setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
-                return;
-              }
-
-              if (progress.event === "Progress") {
-                const chunkLength = Number(progress.data.chunkLength);
-                if (Number.isFinite(chunkLength) && chunkLength > 0) {
-                  downloadedBytes += chunkLength;
-                }
-
-                const percent = totalBytes
-                  ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
-                  : null;
-
-                setUpdateDownload({
-                  active: true,
-                  percent,
-                  downloadedBytes,
-                  totalBytes,
-                });
-                return;
-              }
-
-              if (progress.event === "Finished") {
-                setUpdateDownload((prev) => ({
-                  active: true,
-                  percent: prev.totalBytes ? 100 : prev.percent,
-                  downloadedBytes: prev.downloadedBytes,
-                  totalBytes: prev.totalBytes,
-                }));
-              }
-            });
-
-            setUpdateDownload((prev) => ({
-              ...prev,
-              active: false,
-              percent: prev.percent ?? 100,
-            }));
-            await message(strings.updateInstalled);
-          } finally {
-            await update.close();
+        await update.downloadAndInstall((progress) => {
+          if (progress.event === "Started") {
+            const rawTotal = Number(progress.data.contentLength);
+            totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
+            downloadedBytes = 0;
+            setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
+            return;
           }
-        } catch {
-          if (import.meta.env.DEV) {
-            setNotice((prev) => prev ?? { kind: "error", message: strings.updateCheckFailed });
+
+          if (progress.event === "Progress") {
+            const chunkLength = Number(progress.data.chunkLength);
+            if (Number.isFinite(chunkLength) && chunkLength > 0) {
+              downloadedBytes += chunkLength;
+            }
+
+            const percent = totalBytes
+              ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
+              : null;
+
+            setUpdateDownload({
+              active: true,
+              percent,
+              downloadedBytes,
+              totalBytes,
+            });
+            return;
+          }
+
+          if (progress.event === "Finished") {
+            setUpdateDownload((prev) => ({
+              active: true,
+              percent: prev.totalBytes ? 100 : prev.percent,
+              downloadedBytes: prev.downloadedBytes,
+              totalBytes: prev.totalBytes,
+            }));
+          }
+        });
+
+        setUpdateDownload((prev) => ({
+          ...prev,
+          active: false,
+          percent: prev.percent ?? 100,
+        }));
+        await message(strings.updateInstalled);
+      } catch {
+        setNotice((prev) => prev ?? { kind: "error", message: strings.updateCheckFailed });
+      } finally {
+        if (update) {
+          await update.close();
         }
       }
     })();
-  }, [settings.updateCheckIntervalMins, settings.updateCheckOnLaunch]);
+  }, []);
 
   const { position, sizePercent, updateCheckOnLaunch, updateCheckIntervalMins } = settings;
 

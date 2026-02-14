@@ -149,7 +149,7 @@ jobs:
           }
 
           $latestObject = [ordered]@{
-            version = $env:GITHUB_REF_NAME
+            version = $env:GITHUB_REF_NAME.TrimStart('v')
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
