@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles/app.css";
 import { strings } from "./ui/strings";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { addPathsUnique, type InputFile } from "./domain/inputFiles";
 import {
   DEFAULT_SETTINGS,
@@ -42,6 +43,31 @@ type NoticeState = {
 
 const UPDATE_TOAST_ROLE = "status";
 
+function isTauriRuntime() {
+  return (
+    typeof window !== "undefined" &&
+    ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
+  );
+}
+
+function toErrorDetail(error: unknown) {
+  let detail = "";
+
+  if (error instanceof Error) {
+    detail = error.message;
+  } else if (typeof error === "string") {
+    detail = error;
+  } else {
+    try {
+      detail = JSON.stringify(error) ?? "";
+    } catch {
+      detail = "";
+    }
+  }
+
+  return detail.length > 500 ? detail.slice(0, 500) : detail;
+}
+
 function App() {
   const [logoOk, setLogoOk] = useState(true);
   const [headerIconSrc, setHeaderIconSrc] = useState("/icon.png");
@@ -58,6 +84,8 @@ function App() {
   const [results, setResults] = useState<StampFileResult[]>([]);
   const activeRequestIdRef = useRef<string | null>(null);
   const updateCheckStartedRef = useRef(false);
+  const [isUpdateChecking, setIsUpdateChecking] = useState(false);
+  const [appVersion, setAppVersion] = useState("-");
   const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState>({
     active: false,
     percent: null,
@@ -65,93 +93,123 @@ function App() {
     totalBytes: null,
   });
 
+  const runUpdateCheck = useCallback(async ({ showNoUpdateNotice }: { showNoUpdateNotice: boolean }) => {
+    if (!isTauriRuntime() || isUpdateChecking) return;
+
+    let update: Awaited<ReturnType<typeof check>> | null = null;
+    setIsUpdateChecking(true);
+
+    try {
+      update = await check();
+      if (!update) {
+        if (showNoUpdateNotice) {
+          setNotice({ kind: "info", message: strings.updateNoUpdate });
+        }
+        return;
+      }
+
+      const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
+      const notes =
+        plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
+      const shouldInstall = await confirm(
+        strings.updateConfirm
+          .replace("{version}", update.version)
+          .replace("{notes}", notes),
+      );
+
+      if (!shouldInstall) return;
+
+      let downloadedBytes = 0;
+      let totalBytes: number | null = null;
+      setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
+
+      await update.downloadAndInstall((progress) => {
+        if (progress.event === "Started") {
+          const rawTotal = Number(progress.data.contentLength);
+          totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
+          downloadedBytes = 0;
+          setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
+          return;
+        }
+
+        if (progress.event === "Progress") {
+          const chunkLength = Number(progress.data.chunkLength);
+          if (Number.isFinite(chunkLength) && chunkLength > 0) {
+            downloadedBytes += chunkLength;
+          }
+
+          const percent = totalBytes
+            ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
+            : null;
+
+          setUpdateDownload({
+            active: true,
+            percent,
+            downloadedBytes,
+            totalBytes,
+          });
+          return;
+        }
+
+        if (progress.event === "Finished") {
+          setUpdateDownload((prev) => ({
+            active: true,
+            percent: prev.totalBytes ? 100 : prev.percent,
+            downloadedBytes: prev.downloadedBytes,
+            totalBytes: prev.totalBytes,
+          }));
+        }
+      });
+
+      setUpdateDownload((prev) => ({
+        ...prev,
+        active: false,
+        percent: prev.percent ?? 100,
+      }));
+      await message(strings.updateInstalled);
+    } catch (error) {
+      const detail = toErrorDetail(error);
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.updateCheckFailed}: ${detail}` : strings.updateCheckFailed,
+      });
+    } finally {
+      setIsUpdateChecking(false);
+      if (update) {
+        try {
+          await update.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+    }
+  }, [isUpdateChecking]);
+
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    if (updateCheckStartedRef.current) return;
-    updateCheckStartedRef.current = true;
+    if (!isTauriRuntime()) {
+      setAppVersion("-");
+      return;
+    }
 
     (async () => {
-      const isTauriRuntime =
-        typeof window !== "undefined" &&
-        ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
-      if (!isTauriRuntime) return;
-      let update: Awaited<ReturnType<typeof check>> | null = null;
-
       try {
-        update = await check();
-        if (!update) return;
-
-        const plainNotes = (update.body ?? "").replace(/\s+/g, " ").trim();
-        const notes =
-          plainNotes.length > 280 ? `${plainNotes.slice(0, 280)}...` : plainNotes || strings.updateNoNotes;
-        const shouldInstall = await confirm(
-          strings.updateConfirm
-            .replace("{version}", update.version)
-            .replace("{notes}", notes),
-        );
-
-        if (!shouldInstall) return;
-
-        let downloadedBytes = 0;
-        let totalBytes: number | null = null;
-        setUpdateDownload({ active: true, percent: null, downloadedBytes: 0, totalBytes: null });
-
-        await update.downloadAndInstall((progress) => {
-          if (progress.event === "Started") {
-            const rawTotal = Number(progress.data.contentLength);
-            totalBytes = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : null;
-            downloadedBytes = 0;
-            setUpdateDownload({ active: true, percent: 0, downloadedBytes: 0, totalBytes });
-            return;
-          }
-
-          if (progress.event === "Progress") {
-            const chunkLength = Number(progress.data.chunkLength);
-            if (Number.isFinite(chunkLength) && chunkLength > 0) {
-              downloadedBytes += chunkLength;
-            }
-
-            const percent = totalBytes
-              ? Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)))
-              : null;
-
-            setUpdateDownload({
-              active: true,
-              percent,
-              downloadedBytes,
-              totalBytes,
-            });
-            return;
-          }
-
-          if (progress.event === "Finished") {
-            setUpdateDownload((prev) => ({
-              active: true,
-              percent: prev.totalBytes ? 100 : prev.percent,
-              downloadedBytes: prev.downloadedBytes,
-              totalBytes: prev.totalBytes,
-            }));
-          }
-        });
-
-        setUpdateDownload((prev) => ({
-          ...prev,
-          active: false,
-          percent: prev.percent ?? 100,
-        }));
-        await message(strings.updateInstalled);
+        const version = await getVersion();
+        setAppVersion(version || "-");
       } catch {
-        setNotice((prev) => prev ?? { kind: "error", message: strings.updateCheckFailed });
-      } finally {
-        if (update) {
-          await update.close();
-        }
+        setAppVersion("-");
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (updateCheckStartedRef.current) return;
+    updateCheckStartedRef.current = true;
+    void runUpdateCheck({ showNoUpdateNotice: false });
+  }, [runUpdateCheck]);
 
   const { position, sizePercent, updateCheckOnLaunch, updateCheckIntervalMins } = settings;
 
@@ -715,8 +773,25 @@ function App() {
         </div>
 
         <footer className="cb-footer">
-          <div className="cb-note">{strings.footerRunStatus.replace("{count}", String(files.length))}</div>
-          <div className="cb-note">위치: {position} / 크기: {sizePercent}%</div>
+          <div className="cb-footerMeta">
+            <div className="cb-note">{strings.footerRunStatus.replace("{count}", String(files.length))}</div>
+            <div className="cb-note">위치: {position} / 크기: {sizePercent}%</div>
+          </div>
+          <div className="cb-footerUpdate">
+            <div className="cb-note">
+              {strings.appVersionLabel}: {appVersion}
+            </div>
+            <button
+              className="cb-btn cb-btnFooter"
+              type="button"
+              disabled={isUpdateChecking || updateDownload.active}
+              onClick={() => {
+                void runUpdateCheck({ showNoUpdateNotice: true });
+              }}
+            >
+              {strings.manualUpdateCheck}
+            </button>
+          </div>
         </footer>
       </div>
     </div>

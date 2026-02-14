@@ -49,6 +49,9 @@ export const strings = {
   resultSuccess: "성공",
   resultFailure: "실패",
   footerRunStatus: "현재 선택 파일 {count}개",
+  appVersionLabel: "앱 버전",
+  manualUpdateCheck: "업데이트 확인",
+  updateNoUpdate: "최신 버전을 사용 중입니다.",
   updateConfirm:
     "새 업데이트(v{version})가 있습니다. 지금 설치할까요?\n\n변경 사항:\n{notes}\n\n설치 중에는 잠시 기다려 주세요.",
   updateNoNotes: "릴리즈 노트가 없습니다.",
