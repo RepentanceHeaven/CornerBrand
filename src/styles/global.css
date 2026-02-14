@@ -54,3 +54,41 @@ select {
   outline: 2px solid rgba(15, 61, 91, 0.55);
   outline-offset: 2px;
 }
+
+.cb-fatal-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.cb-fatal-card {
+  width: min(680px, 100%);
+  background: var(--cb-surface-strong);
+  border: 1px solid var(--cb-border-strong);
+  border-radius: 16px;
+  box-shadow: var(--cb-shadow);
+  padding: 20px;
+}
+
+.cb-fatal-title {
+  margin: 0;
+}
+
+.cb-fatal-guide {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.cb-fatal-error {
+  margin-top: 14px;
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--cb-danger);
+  background: rgba(155, 44, 44, 0.08);
+  border-radius: 12px;
+  border: 1px solid rgba(155, 44, 44, 0.2);
+  padding: 12px;
+  font-family: var(--cb-font-sans);
+}

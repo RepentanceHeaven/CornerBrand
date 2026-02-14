@@ -32,40 +32,11 @@ function normalizeErrorMessage(input: unknown): string {
 
 function FatalErrorScreen({ message }: { message: string }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 24,
-      }}
-    >
-      <section
-        style={{
-          width: "min(680px, 100%)",
-          background: "var(--cb-surface-strong)",
-          border: "1px solid var(--cb-border-strong)",
-          borderRadius: 16,
-          boxShadow: "var(--cb-shadow)",
-          padding: 20,
-        }}
-      >
-        <h1 style={{ margin: 0 }}>{strings.fatalTitle}</h1>
-        <p style={{ marginTop: 10, marginBottom: 0 }}>{strings.fatalGuide}</p>
-        <pre
-          style={{
-            marginTop: 14,
-            marginBottom: 0,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            color: "var(--cb-danger)",
-            background: "rgba(155, 44, 44, 0.08)",
-            borderRadius: 12,
-            border: "1px solid rgba(155, 44, 44, 0.2)",
-            padding: 12,
-            fontFamily: "var(--cb-font-sans)",
-          }}
-        >
+    <div className="cb-fatal-wrap">
+      <section className="cb-fatal-card">
+        <h1 className="cb-fatal-title">{strings.fatalTitle}</h1>
+        <p className="cb-fatal-guide">{strings.fatalGuide}</p>
+        <pre className="cb-fatal-error">
           {strings.fatalErrorLabel} {message || strings.unknownError}
         </pre>
       </section>

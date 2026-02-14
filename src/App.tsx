@@ -35,7 +35,13 @@ type UpdateDownloadState = {
   totalBytes: number | null;
 };
 
+type NoticeState = {
+  kind: "info" | "error";
+  message: string;
+};
+
 const UPDATE_LAST_CHECK_MS_KEY = "cornerbrand.update.lastCheckMs";
+const UPDATE_TOAST_ROLE = "status";
 
 function getLastUpdateCheckMs(): number | null {
   try {
@@ -64,7 +70,7 @@ function App() {
   const [customOutputDir, setCustomOutputDir] = useState<string | null>(null);
 
   const [files, setFiles] = useState<InputFile[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeState | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(0);
@@ -169,11 +175,11 @@ function App() {
           }
         } catch {
           if (import.meta.env.DEV) {
-            setNotice((prev) => prev ?? strings.updateCheckFailed);
+            setNotice((prev) => prev ?? { kind: "error", message: strings.updateCheckFailed });
         }
       }
     })();
-  }, []);
+  }, [settings.updateCheckIntervalMins, settings.updateCheckOnLaunch]);
 
   const { position, sizePercent, updateCheckOnLaunch, updateCheckIntervalMins } = settings;
 
@@ -187,7 +193,7 @@ function App() {
           (event) => {
             setFiles((prev) => {
               const { next, rejected } = addPathsUnique(prev, event.payload.paths);
-              if (rejected.length) setNotice(strings.unsupportedFiles);
+              if (rejected.length) setNotice({ kind: "info", message: strings.unsupportedFiles });
               return next;
             });
           },
@@ -265,12 +271,15 @@ function App() {
       const paths = Array.isArray(result) ? result : [result];
       setFiles((prev) => {
         const { next, rejected } = addPathsUnique(prev, paths);
-        if (rejected.length) setNotice(strings.unsupportedFiles);
+        if (rejected.length) setNotice({ kind: "info", message: strings.unsupportedFiles });
         return next;
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "";
-      setNotice(detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed);
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed,
+      });
     }
   }
 
@@ -287,7 +296,10 @@ function App() {
       setCustomLogoPath(result);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "";
-      setNotice(detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed);
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed,
+      });
     }
   }
 
@@ -303,7 +315,10 @@ function App() {
       setCustomOutputDir(result);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "";
-      setNotice(detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed);
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed,
+      });
     }
   }
 
@@ -333,7 +348,7 @@ function App() {
       setResults(stampResults);
     } catch (error) {
       const detail = typeof error === "string" ? error : strings.runFailed;
-      setNotice(`${strings.runFailed} ${detail}`);
+      setNotice({ kind: "error", message: `${strings.runFailed} ${detail}` });
       setResults([]);
     } finally {
       activeRequestIdRef.current = null;
@@ -394,36 +409,27 @@ function App() {
             >
               {isProcessing ? strings.processing : strings.run}
             </button>
-            {updateDownload.active ? (
-              <div
-                className="cb-note"
-                style={{
-                  marginTop: 8,
-                  padding: "6px 10px",
-                  borderRadius: 10,
-                  border: "1px solid var(--cb-line)",
-                  background: "var(--cb-panel)",
-                  maxWidth: 280,
-                }}
-              >
-                <div>{strings.updateDownloading}</div>
-                <div>
-                  {updateDownload.percent !== null
-                    ? `${strings.updatePercentPrefix} ${updateDownload.percent}%`
-                    : strings.updatePercentUnknown}
-                </div>
-                {updateDownload.downloadedBytes !== null ? (
-                  <div>
-                    {strings.updateBytesPrefix} {updateDownload.downloadedBytes.toLocaleString()}
-                    {updateDownload.totalBytes
-                      ? ` / ${updateDownload.totalBytes.toLocaleString()} ${strings.updateBytesUnit}`
-                      : ` ${strings.updateBytesUnit}`}
-                  </div>
-                ) : null}
+          </div>
+        </header>
+
+        {updateDownload.active ? (
+          <div className="cb-updateToast" role={UPDATE_TOAST_ROLE} aria-live="polite">
+            <div className="cb-updateToastTitle">{strings.updateDownloading}</div>
+            <div className="cb-updateToastLine">
+              {updateDownload.percent !== null
+                ? `${strings.updatePercentPrefix} ${updateDownload.percent}%`
+                : strings.updatePercentUnknown}
+            </div>
+            {updateDownload.downloadedBytes !== null ? (
+              <div className="cb-updateToastLine">
+                {strings.updateBytesPrefix} {updateDownload.downloadedBytes.toLocaleString()}
+                {updateDownload.totalBytes
+                  ? ` / ${updateDownload.totalBytes.toLocaleString()} ${strings.updateBytesUnit}`
+                  : ` ${strings.updateBytesUnit}`}
               </div>
             ) : null}
           </div>
-        </header>
+        ) : null}
 
         <div className="cb-body">
           <section className="cb-card" aria-label={strings.filesTitle}>
@@ -432,19 +438,22 @@ function App() {
               <p>{strings.filesHelp}</p>
             </div>
             <div className="cb-cardBody">
-              <div className="cb-drop" role="region" aria-label={strings.dropTitle}>
+              <section className="cb-drop" aria-label={strings.dropTitle}>
                 <strong>{strings.dropTitle}</strong>
                 <span>{strings.dropHint}</span>
                 {!logoOk ? <span>{strings.missingLogo}</span> : null}
-              </div>
+              </section>
 
               {notice ? (
-                <div className="cb-note" style={{ marginTop: 10, color: "var(--cb-danger)" }}>
-                  {notice}
+                <div
+                  className={`cb-alert ${notice.kind === "error" ? "cb-alertError" : "cb-alertInfo"}`}
+                  aria-live={notice.kind === "error" ? "assertive" : "polite"}
+                >
+                  {notice.message}
                 </div>
               ) : null}
 
-              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <div className="cb-inlineButtons cb-inlineButtonsTop">
                 <button
                   className="cb-btn"
                   type="button"
@@ -459,41 +468,33 @@ function App() {
               </div>
 
               {isProcessing && progressTotal > 0 ? (
-                <div className="cb-note" style={{ marginTop: 10 }}>
+                <div className="cb-note cb-progressWrap">
                   <div>
                     {strings.progressStatus}: {progressDone} / {progressTotal}
                   </div>
-                  <progress value={progressDone} max={progressTotal} style={{ width: "100%", marginTop: 6 }} />
+                  <progress value={progressDone} max={progressTotal} className="cb-progressBar" />
                   {progressFileName ? (
-                    <div style={{ marginTop: 6 }}>
+                    <div className="cb-progressFile">
                       {strings.currentFileLabel} {progressFileName}
                     </div>
                   ) : null}
                 </div>
               ) : null}
 
-              <div className="cb-list" aria-label="파일 목록">
+              <section className="cb-list" aria-label={strings.filesTitle}>
                 {files.length === 0 ? (
                   <div className="cb-listItem">
-                    <div style={{ minWidth: 0 }}>{strings.placeholderRow}</div>
+                    <div className="cb-minWidth0">{strings.placeholderRow}</div>
                     <div className="cb-badge">-</div>
                   </div>
                 ) : null}
 
                 {files.map((f) => (
                   <div className="cb-listItem" key={f.path}>
-                    <div
-                      style={{
-                        minWidth: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={f.path}
-                    >
+                    <div className="cb-minWidth0 cb-ellipsis" title={f.path}>
                       {f.name}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div className="cb-listItemActions">
                       <div className="cb-badge">
                         {typeof f.ext === "string" && f.ext ? f.ext.toUpperCase() : "-"}
                       </div>
@@ -513,7 +514,7 @@ function App() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </section>
             </div>
           </section>
 
@@ -522,162 +523,180 @@ function App() {
               <h2>{strings.settingsTitle}</h2>
               <p>{strings.settingsHelp}</p>
             </div>
-            <div className="cb-cardBody">
-              <div className="cb-card" style={{ borderRadius: 14, marginBottom: 12 }}>
-                <div className="cb-cardHeader">
-                  <h2>{strings.logoImageTitle}</h2>
-                  <p>{strings.logoImageHelp}</p>
-                </div>
-                <div className="cb-cardBody">
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <button
-                      className="cb-btn"
-                      type="button"
-                      disabled={isProcessing}
-                      onClick={pickLogoFile}
-                    >
-                      {strings.pickLogoFile}
-                    </button>
-                    <button
-                      className="cb-btn"
-                      type="button"
-                      disabled={isProcessing}
-                      onClick={() => setCustomLogoPath(null)}
-                    >
-                      {strings.useDefaultLogo}
-                    </button>
+            <div className="cb-cardBody cb-settingsBody">
+              <div className="cb-settingsGrid">
+                <section className="cb-settingsSection" aria-label="로고/저장">
+                  <h3 className="cb-settingsHeading">로고/저장</h3>
+
+                  <div className="cb-card cb-settingsSubcard">
+                    <div className="cb-cardHeader">
+                      <h2>{strings.logoImageTitle}</h2>
+                      <p>{strings.logoImageHelp}</p>
+                    </div>
+                    <div className="cb-cardBody">
+                      <div className="cb-inlineButtons">
+                        <button
+                          className="cb-btn"
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={pickLogoFile}
+                        >
+                          {strings.pickLogoFile}
+                        </button>
+                        <button
+                          className="cb-btn"
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => setCustomLogoPath(null)}
+                        >
+                          {strings.useDefaultLogo}
+                        </button>
+                      </div>
+                      <div className="cb-note cb-noteBlock" title={customLogoPath ?? strings.defaultLogoPath}>
+                        {customLogoPath ?? strings.defaultLogoPath}
+                      </div>
+                    </div>
                   </div>
-                  <div className="cb-note" style={{ marginTop: 10 }} title={customLogoPath ?? strings.defaultLogoPath}>
-                    {customLogoPath ?? strings.defaultLogoPath}
+
+                  <div className="cb-card cb-settingsSubcard">
+                    <div className="cb-cardHeader">
+                      <h2>{strings.outputDirTitle}</h2>
+                      <p>{strings.outputDirHelp}</p>
+                    </div>
+                    <div className="cb-cardBody">
+                      <div className="cb-inlineButtons">
+                        <button
+                          className="cb-btn"
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={pickOutputDir}
+                        >
+                          {strings.pickOutputDir}
+                        </button>
+                        <button
+                          className="cb-btn"
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => setCustomOutputDir(null)}
+                        >
+                          {strings.useDefaultOutputDir}
+                        </button>
+                      </div>
+                      <div className="cb-note cb-noteBlock" title={customOutputDir ?? strings.defaultOutputDir}>
+                        {customOutputDir ?? strings.defaultOutputDir}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </section>
 
-              <div className="cb-card" style={{ borderRadius: 14, marginBottom: 12 }}>
-                <div className="cb-cardHeader">
-                  <h2>{strings.outputDirTitle}</h2>
-                  <p>{strings.outputDirHelp}</p>
-                </div>
-                <div className="cb-cardBody">
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <button
-                      className="cb-btn"
-                      type="button"
-                      disabled={isProcessing}
-                      onClick={pickOutputDir}
-                    >
-                      {strings.pickOutputDir}
-                    </button>
-                    <button
-                      className="cb-btn"
-                      type="button"
-                      disabled={isProcessing}
-                      onClick={() => setCustomOutputDir(null)}
-                    >
-                      {strings.useDefaultOutputDir}
-                    </button>
+                <section className="cb-settingsSection" aria-label="실행 설정">
+                  <h3 className="cb-settingsHeading">실행 설정</h3>
+
+                  <div className="cb-card cb-settingsSubcard">
+                    <div className="cb-cardBody cb-settingsFields">
+                      <div className="cb-field">
+                        <label htmlFor="cb-position">{strings.positionLabel}</label>
+                        <select
+                          id="cb-position"
+                          className="cb-select"
+                          value={position}
+                          onChange={(e) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              position: e.currentTarget.value as CornerBrandSettings["position"],
+                            }))
+                          }
+                        >
+                          <option value="좌상단">좌상단</option>
+                          <option value="우상단">우상단</option>
+                          <option value="좌하단">좌하단</option>
+                          <option value="우하단">우하단</option>
+                        </select>
+                      </div>
+
+                      <div className="cb-field">
+                        <label htmlFor="cb-size">{strings.sizeLabel}</label>
+                        <input
+                          id="cb-size"
+                          className="cb-range"
+                          type="range"
+                          min={1}
+                          max={50}
+                          step={1}
+                          value={sizePercent}
+                          onChange={(e) => {
+                            const nextSizePercent = Number(e.currentTarget.value);
+                            setSettings((prev) => ({
+                              ...prev,
+                              sizePercent: Number.isFinite(nextSizePercent)
+                                ? Math.min(50, Math.max(1, Math.round(nextSizePercent)))
+                                : DEFAULT_SETTINGS.sizePercent,
+                            }));
+                          }}
+                        />
+                        <div className="cb-note cb-noteBlockTight">
+                          현재 선택: {sizePercent}%
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div
-                    className="cb-note"
-                    style={{ marginTop: 10 }}
-                    title={customOutputDir ?? strings.defaultOutputDir}
-                  >
-                    {customOutputDir ?? strings.defaultOutputDir}
+                </section>
+
+                <section className="cb-settingsSection" aria-label="업데이트">
+                  <h3 className="cb-settingsHeading">업데이트</h3>
+
+                  <div className="cb-card cb-settingsSubcard">
+                    <div className="cb-cardBody cb-settingsFields">
+                      <div className="cb-field">
+                        <label htmlFor="cb-update-check-on-launch" className="cb-checkLabel">
+                          <input
+                            id="cb-update-check-on-launch"
+                            className="cb-checkbox"
+                            type="checkbox"
+                            checked={updateCheckOnLaunch}
+                            onChange={(e) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                updateCheckOnLaunch: e.currentTarget.checked,
+                              }))
+                            }
+                          />
+                          <span>{strings.updateCheckOnLaunchLabel}</span>
+                        </label>
+                        <div className="cb-note cb-noteBlockTight">
+                          {strings.updateCheckOnLaunchHelp}
+                        </div>
+                      </div>
+
+                      <div className="cb-field">
+                        <label htmlFor="cb-update-check-interval">{strings.updateCheckIntervalLabel}</label>
+                        <input
+                          id="cb-update-check-interval"
+                          className="cb-number"
+                          type="number"
+                          min={0}
+                          max={1440}
+                          step={1}
+                          value={updateCheckIntervalMins}
+                          onChange={(e) => {
+                            const nextIntervalMins = Number(e.currentTarget.value);
+                            setSettings((prev) => ({
+                              ...prev,
+                              updateCheckIntervalMins: Number.isFinite(nextIntervalMins)
+                                ? Math.min(1440, Math.max(0, Math.round(nextIntervalMins)))
+                                : 0,
+                            }));
+                          }}
+                        />
+                        <div className="cb-note cb-noteBlockTight">
+                          {strings.updateCheckIntervalHelp}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </section>
 
-              <div className="cb-field">
-                <label htmlFor="cb-position">{strings.positionLabel}</label>
-                <select
-                  id="cb-position"
-                  className="cb-select"
-                  value={position}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      position: e.currentTarget.value as CornerBrandSettings["position"],
-                    }))
-                  }
-                >
-                  <option value="좌상단">좌상단</option>
-                  <option value="우상단">우상단</option>
-                  <option value="좌하단">좌하단</option>
-                  <option value="우하단">우하단</option>
-                </select>
-              </div>
-
-              <div className="cb-field">
-                <label htmlFor="cb-size">{strings.sizeLabel}</label>
-                <input
-                  id="cb-size"
-                  className="cb-range"
-                  type="range"
-                  min={1}
-                  max={50}
-                  step={1}
-                  value={sizePercent}
-                  onChange={(e) => {
-                    const nextSizePercent = Number(e.currentTarget.value);
-                    setSettings((prev) => ({
-                      ...prev,
-                      sizePercent: Number.isFinite(nextSizePercent)
-                        ? Math.min(50, Math.max(1, Math.round(nextSizePercent)))
-                        : DEFAULT_SETTINGS.sizePercent,
-                    }));
-                  }}
-                />
-                <div className="cb-note" style={{ marginTop: 8 }}>
-                  현재 선택: {sizePercent}%
-                </div>
-              </div>
-
-              <div className="cb-field">
-                <label htmlFor="cb-update-check-on-launch" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    id="cb-update-check-on-launch"
-                    type="checkbox"
-                    checked={updateCheckOnLaunch}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        updateCheckOnLaunch: e.currentTarget.checked,
-                      }))
-                    }
-                  />
-                  <span>{strings.updateCheckOnLaunchLabel}</span>
-                </label>
-                <div className="cb-note" style={{ marginTop: 8 }}>
-                  {strings.updateCheckOnLaunchHelp}
-                </div>
-              </div>
-
-              <div className="cb-field">
-                <label htmlFor="cb-update-check-interval">{strings.updateCheckIntervalLabel}</label>
-                <input
-                  id="cb-update-check-interval"
-                  className="cb-select"
-                  type="number"
-                  min={0}
-                  max={1440}
-                  step={1}
-                  value={updateCheckIntervalMins}
-                  onChange={(e) => {
-                    const nextIntervalMins = Number(e.currentTarget.value);
-                    setSettings((prev) => ({
-                      ...prev,
-                      updateCheckIntervalMins: Number.isFinite(nextIntervalMins)
-                        ? Math.min(1440, Math.max(0, Math.round(nextIntervalMins)))
-                        : 0,
-                    }));
-                  }}
-                />
-                <div className="cb-note" style={{ marginTop: 8 }}>
-                  {strings.updateCheckIntervalHelp}
-                </div>
-              </div>
-
-              <div className="cb-card" style={{ borderRadius: 14 }}>
+                <div className="cb-card cb-settingsOutputCard">
                 <div className="cb-cardHeader">
                   <h2>{strings.outputTitle}</h2>
                   <p>{strings.outputHelp}</p>
@@ -687,7 +706,7 @@ function App() {
                     <div className="cb-note">{strings.placeholderRight}</div>
                   ) : (
                     <>
-                      <div className="cb-note" style={{ marginBottom: 10 }}>
+                      <div className="cb-note cb-noteBottom">
                         {strings.resultSummaryPrefix} {resultSummary.success}
                         {strings.resultSummaryDivider}
                         {resultSummary.failure}
@@ -695,21 +714,14 @@ function App() {
                         {resultSummary.total}
                         {strings.resultSummaryTotalUnit}
                       </div>
-                      <div className="cb-list" aria-label={strings.outputTitle}>
+                      <section className="cb-list" aria-label={strings.outputTitle}>
                         {results.map((result) => (
                           <div className="cb-listItem" key={result.inputPath}>
-                            <div style={{ minWidth: 0 }}>
-                              <div
-                                style={{
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                                title={result.inputPath}
-                              >
+                            <div className="cb-minWidth0">
+                              <div className="cb-ellipsis" title={result.inputPath}>
                                 {result.inputPath.replace(/\\/g, "/").split("/").pop()}
                               </div>
-                              <div className="cb-note" style={{ marginTop: 4 }}>
+                              <div className="cb-note cb-noteTop4">
                                 {result.ok
                                   ? `${strings.outputPathLabel} ${result.outputPath ?? "-"}`
                                   : `${strings.errorLabel} ${result.error ?? strings.unknownError}`}
@@ -720,9 +732,10 @@ function App() {
                             </div>
                           </div>
                         ))}
-                      </div>
+                      </section>
                     </>
                   )}
+                </div>
                 </div>
               </div>
             </div>
