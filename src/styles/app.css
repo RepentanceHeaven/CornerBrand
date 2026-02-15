@@ -108,7 +108,7 @@
 
 .cb-body {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: 0.9fr 1.1fr;
   gap: 14px;
   padding: 14px;
 }
@@ -277,6 +277,39 @@
   gap: 8px;
 }
 
+.cb-scrollWrapFiles,
+.cb-scrollWrapOutput {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.cb-scrollWrapFiles {
+  max-height: 240px;
+}
+
+.cb-scrollWrapOutput {
+  max-height: 380px;
+}
+
+.cb-scrollWrapFiles::-webkit-scrollbar,
+.cb-scrollWrapOutput::-webkit-scrollbar {
+  width: 10px;
+}
+
+.cb-scrollWrapFiles::-webkit-scrollbar-thumb,
+.cb-scrollWrapOutput::-webkit-scrollbar-thumb {
+  background: rgba(79, 157, 204, 0.34);
+  border: 2px solid rgba(18, 26, 38, 0.82);
+  border-radius: 999px;
+}
+
+.cb-scrollWrapFiles::-webkit-scrollbar-track,
+.cb-scrollWrapOutput::-webkit-scrollbar-track {
+  background: rgba(18, 26, 38, 0.5);
+  border-radius: 999px;
+}
+
 .cb-listItem {
   display: flex;
   justify-content: space-between;
@@ -285,6 +318,51 @@
   border: 1px solid var(--cb-border);
   border-radius: 14px;
   background: rgba(24, 34, 47, 0.82);
+}
+
+.cb-fileNameButton {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  background: none;
+  color: var(--cb-ink-1);
+  cursor: pointer;
+}
+
+.cb-fileNameButton:hover {
+  color: var(--cb-ink);
+}
+
+.cb-fileNameButton:focus-visible {
+  outline: none;
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(28, 110, 140, 0.2);
+}
+
+.cb-outputListButton {
+  width: 100%;
+  appearance: none;
+  text-align: left;
+  color: var(--cb-ink-1);
+  cursor: pointer;
+  transition: border-color 130ms ease, background 130ms ease, transform 130ms ease;
+}
+
+.cb-outputListButton:hover {
+  border-color: var(--cb-border-strong);
+  background: rgba(30, 42, 56, 0.9);
+  transform: translateY(-1px);
+}
+
+.cb-outputListButton:active {
+  transform: translateY(0);
+}
+
+.cb-outputListButton:focus-visible {
+  outline: none;
+  border-color: rgba(28, 110, 140, 0.6);
+  box-shadow: 0 0 0 3px rgba(28, 110, 140, 0.2);
 }
 
 .cb-listItemActions {
@@ -433,6 +511,73 @@
 .cb-note {
   font-size: 12px;
   color: var(--cb-ink-2);
+}
+
+.cb-logoPreviewSpacing {
+  margin-top: 12px;
+}
+
+.cb-logoPreviewImage {
+  display: block;
+  width: min(220px, 100%);
+  max-height: 160px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--cb-border);
+  background:
+    radial-gradient(180px 60px at 45% 25%, rgba(28, 110, 140, 0.18), rgba(0, 0, 0, 0)),
+    rgba(18, 26, 38, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(79, 157, 204, 0.14);
+  padding: 8px;
+}
+
+.cb-previewOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(6, 10, 15, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.cb-previewCard {
+  width: min(860px, 100%);
+  max-height: calc(100vh - 40px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--cb-border);
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(24, 34, 47, 0.98), rgba(16, 24, 35, 0.96));
+  box-shadow: 0 24px 80px rgba(5, 10, 20, 0.6);
+}
+
+.cb-previewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--cb-border);
+  background: rgba(17, 25, 37, 0.88);
+}
+
+.cb-previewTitle {
+  font-size: 13px;
+  color: var(--cb-ink-1);
+}
+
+.cb-previewImage {
+  width: 100%;
+  max-height: calc(100vh - 128px);
+  display: block;
+  object-fit: contain;
+  background:
+    radial-gradient(420px 180px at 50% 0%, rgba(28, 110, 140, 0.16), rgba(0, 0, 0, 0)),
+    rgba(13, 20, 30, 0.95);
 }
 
 .cb-updateToast {

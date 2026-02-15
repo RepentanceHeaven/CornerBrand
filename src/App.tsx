@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles/app.css";
 import { strings } from "./ui/strings";
 import { confirm, message, open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { addPathsUnique, type InputFile } from "./domain/inputFiles";
 import {
@@ -42,6 +43,17 @@ type NoticeState = {
 };
 
 const UPDATE_TOAST_ROLE = "status";
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "bmp", "gif", "svg"]);
+
+function getPathExtension(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  const ext = normalized.split(".").pop();
+  return ext ? ext.toLowerCase() : "";
+}
+
+function isImagePath(path: string) {
+  return IMAGE_EXTENSIONS.has(getPathExtension(path));
+}
 
 function isTauriRuntime() {
   return (
@@ -92,6 +104,8 @@ function App() {
     downloadedBytes: null,
     totalBytes: null,
   });
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState<string>("");
 
   const runUpdateCheck = useCallback(async ({ showNoUpdateNotice }: { showNoUpdateNotice: boolean }) => {
     if (!isTauriRuntime() || isUpdateChecking) return;
@@ -211,7 +225,7 @@ function App() {
     void runUpdateCheck({ showNoUpdateNotice: false });
   }, [runUpdateCheck]);
 
-  const { position, sizePercent, updateCheckOnLaunch, updateCheckIntervalMins } = settings;
+  const { position, sizePercent } = settings;
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -389,6 +403,24 @@ function App() {
     }
   }
 
+  async function openPreviewOrPath(path: string, name: string) {
+    if (isImagePath(path)) {
+      setPreviewPath(path);
+      setPreviewName(name);
+      return;
+    }
+
+    try {
+      await openPath(path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "";
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed,
+      });
+    }
+  }
+
   const runHint = useMemo(() => {
     if (files.length === 0) return "파일을 먼저 추가하세요";
     return isProcessing ? strings.processing : strings.run;
@@ -400,6 +432,16 @@ function App() {
     const failure = total - success;
     return { total, success, failure };
   }, [results]);
+
+  const logoPreviewSrc = useMemo(
+    () => (customLogoPath ? convertFileSrc(customLogoPath) : "/logo.webp"),
+    [customLogoPath],
+  );
+
+  const previewImageSrc = useMemo(
+    () => (previewPath ? convertFileSrc(previewPath) : null),
+    [previewPath],
+  );
 
   return (
     <div className="cb-shell">
@@ -427,9 +469,6 @@ function App() {
             </div>
           </div>
           <div className="cb-actions">
-            <button className="cb-btn" type="button" onClick={pickFiles}>
-              {strings.pickFiles}
-            </button>
             <button
               className="cb-btn cb-btnPrimary"
               type="button"
@@ -484,6 +523,9 @@ function App() {
               ) : null}
 
               <div className="cb-inlineButtons cb-inlineButtonsTop">
+                <button className="cb-btn" type="button" disabled={isProcessing} onClick={pickFiles}>
+                  {strings.pickFiles}
+                </button>
                 <button
                   className="cb-btn"
                   type="button"
@@ -511,40 +553,50 @@ function App() {
                 </div>
               ) : null}
 
-              <section className="cb-list" aria-label={strings.filesTitle}>
-                {files.length === 0 ? (
-                  <div className="cb-listItem">
-                    <div className="cb-minWidth0">{strings.placeholderRow}</div>
-                    <div className="cb-badge">-</div>
-                  </div>
-                ) : null}
+              <div className="cb-listScroll cb-listScrollFiles cb-scrollWrapFiles">
+                <section className="cb-list" aria-label={strings.filesTitle}>
+                  {files.length === 0 ? (
+                    <div className="cb-listItem">
+                      <div className="cb-minWidth0">{strings.placeholderRow}</div>
+                      <div className="cb-badge">-</div>
+                    </div>
+                  ) : null}
 
-                {files.map((f) => (
-                  <div className="cb-listItem" key={f.path}>
-                    <div className="cb-minWidth0 cb-ellipsis" title={f.path}>
-                      {f.name}
-                    </div>
-                    <div className="cb-listItemActions">
-                      <div className="cb-badge">
-                        {typeof f.ext === "string" && f.ext ? f.ext.toUpperCase() : "-"}
-                      </div>
+                  {files.map((f) => (
+                    <div className="cb-listItem" key={f.path}>
                       <button
-                        className="cb-btn"
+                        className="cb-minWidth0 cb-ellipsis cb-fileNameButton"
                         type="button"
-                        disabled={isProcessing}
+                        title={f.path}
                         onClick={() => {
-                          setFiles((prev) => prev.filter((x) => x.path !== f.path));
-                          setResults((prev) => prev.filter((x) => x.inputPath !== f.path));
+                          void openPreviewOrPath(f.path, f.name);
                         }}
-                        aria-label={strings.removeOne}
-                        title={strings.removeOne}
                       >
-                        {strings.removeOne}
+                        {f.name}
                       </button>
+                      <div className="cb-listItemActions">
+                        <div className="cb-badge">
+                          {typeof f.ext === "string" && f.ext ? f.ext.toUpperCase() : "-"}
+                        </div>
+                        <button
+                          className="cb-btn"
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setFiles((prev) => prev.filter((x) => x.path !== f.path));
+                            setResults((prev) => prev.filter((x) => x.inputPath !== f.path));
+                          }}
+                          aria-label={strings.removeOne}
+                          title={strings.removeOne}
+                        >
+                          {strings.removeOne}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </section>
+                  ))}
+                </section>
+              </div>
             </div>
           </section>
 
@@ -555,6 +607,66 @@ function App() {
             </div>
             <div className="cb-cardBody cb-settingsBody">
               <div className="cb-settingsGrid">
+                <div className="cb-card cb-settingsOutputCard">
+                  <div className="cb-cardHeader">
+                    <h2>{strings.outputTitle}</h2>
+                    <p>{strings.outputHelp}</p>
+                  </div>
+                  <div className="cb-cardBody">
+                    {results.length === 0 ? (
+                      <div className="cb-note">{strings.placeholderRight}</div>
+                    ) : (
+                      <>
+                        <div className="cb-note cb-noteBottom">
+                          {strings.resultSummaryPrefix} {resultSummary.success}
+                          {strings.resultSummaryDivider}
+                          {resultSummary.failure}
+                          {strings.resultSummaryTail}
+                          {resultSummary.total}
+                          {strings.resultSummaryTotalUnit}
+                        </div>
+                        <div className="cb-listScroll cb-listScrollOutput cb-scrollWrapOutput">
+                          <section className="cb-list" aria-label={strings.outputTitle}>
+                            {results.map((result) => {
+                              const previewTargetPath =
+                                result.ok && result.outputPath ? result.outputPath : result.inputPath;
+                              const previewTargetName = previewTargetPath
+                                .replace(/\\/g, "/")
+                                .split("/")
+                                .pop() ?? previewTargetPath;
+
+                              return (
+                                <button
+                                  className="cb-listItem cb-outputListButton"
+                                  key={result.inputPath}
+                                  type="button"
+                                  onClick={() => {
+                                    void openPreviewOrPath(previewTargetPath, previewTargetName);
+                                  }}
+                                >
+                                  <div className="cb-minWidth0">
+                                    <div className="cb-ellipsis" title={result.inputPath}>
+                                      {result.inputPath.replace(/\\/g, "/").split("/").pop()}
+                                    </div>
+                                    <div className="cb-note cb-noteTop4">
+                                      {result.ok
+                                        ? `${strings.outputPathLabel} ${result.outputPath ?? "-"}`
+                                        : `${strings.errorLabel} ${result.error ?? strings.unknownError}`}
+                                    </div>
+                                  </div>
+                                  <div className="cb-badge">
+                                    {result.ok ? strings.resultSuccess : strings.resultFailure}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </section>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
                 <section className="cb-settingsSection" aria-label="로고/저장">
                   <h3 className="cb-settingsHeading">로고/저장</h3>
 
@@ -584,6 +696,20 @@ function App() {
                       </div>
                       <div className="cb-note cb-noteBlock" title={customLogoPath ?? strings.defaultLogoPath}>
                         {customLogoPath ?? strings.defaultLogoPath}
+                      </div>
+                      <div className="cb-logoPreview cb-logoPreviewSpacing">
+                        <img
+                          src={logoPreviewSrc}
+                          alt={strings.logoImageTitle}
+                          className="cb-logoPreviewImage"
+                          onError={(event) => {
+                            const fallback = "/logo.webp";
+                            if (event.currentTarget.src.endsWith(fallback)) {
+                              return;
+                            }
+                            event.currentTarget.src = fallback;
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
@@ -672,105 +798,35 @@ function App() {
                   </div>
                 </section>
 
-                <section className="cb-settingsSection" aria-label="업데이트">
-                  <h3 className="cb-settingsHeading">업데이트</h3>
-
-                  <div className="cb-card cb-settingsSubcard">
-                    <div className="cb-cardBody cb-settingsFields">
-                      <div className="cb-field">
-                        <label htmlFor="cb-update-check-on-launch" className="cb-checkLabel">
-                          <input
-                            id="cb-update-check-on-launch"
-                            className="cb-checkbox"
-                            type="checkbox"
-                            checked={updateCheckOnLaunch}
-                            onChange={(e) =>
-                              setSettings((prev) => ({
-                                ...prev,
-                                updateCheckOnLaunch: e.currentTarget.checked,
-                              }))
-                            }
-                          />
-                          <span>{strings.updateCheckOnLaunchLabel}</span>
-                        </label>
-                        <div className="cb-note cb-noteBlockTight">
-                          {strings.updateCheckOnLaunchHelp}
-                        </div>
-                      </div>
-
-                      <div className="cb-field">
-                        <label htmlFor="cb-update-check-interval">{strings.updateCheckIntervalLabel}</label>
-                        <input
-                          id="cb-update-check-interval"
-                          className="cb-number"
-                          type="number"
-                          min={0}
-                          max={1440}
-                          step={1}
-                          value={updateCheckIntervalMins}
-                          onChange={(e) => {
-                            const nextIntervalMins = Number(e.currentTarget.value);
-                            setSettings((prev) => ({
-                              ...prev,
-                              updateCheckIntervalMins: Number.isFinite(nextIntervalMins)
-                                ? Math.min(1440, Math.max(0, Math.round(nextIntervalMins)))
-                                : 0,
-                            }));
-                          }}
-                        />
-                        <div className="cb-note cb-noteBlockTight">
-                          {strings.updateCheckIntervalHelp}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <div className="cb-card cb-settingsOutputCard">
-                <div className="cb-cardHeader">
-                  <h2>{strings.outputTitle}</h2>
-                  <p>{strings.outputHelp}</p>
-                </div>
-                <div className="cb-cardBody">
-                  {results.length === 0 ? (
-                    <div className="cb-note">{strings.placeholderRight}</div>
-                  ) : (
-                    <>
-                      <div className="cb-note cb-noteBottom">
-                        {strings.resultSummaryPrefix} {resultSummary.success}
-                        {strings.resultSummaryDivider}
-                        {resultSummary.failure}
-                        {strings.resultSummaryTail}
-                        {resultSummary.total}
-                        {strings.resultSummaryTotalUnit}
-                      </div>
-                      <section className="cb-list" aria-label={strings.outputTitle}>
-                        {results.map((result) => (
-                          <div className="cb-listItem" key={result.inputPath}>
-                            <div className="cb-minWidth0">
-                              <div className="cb-ellipsis" title={result.inputPath}>
-                                {result.inputPath.replace(/\\/g, "/").split("/").pop()}
-                              </div>
-                              <div className="cb-note cb-noteTop4">
-                                {result.ok
-                                  ? `${strings.outputPathLabel} ${result.outputPath ?? "-"}`
-                                  : `${strings.errorLabel} ${result.error ?? strings.unknownError}`}
-                              </div>
-                            </div>
-                            <div className="cb-badge">
-                              {result.ok ? strings.resultSuccess : strings.resultFailure}
-                            </div>
-                          </div>
-                        ))}
-                      </section>
-                    </>
-                  )}
-                </div>
-                </div>
               </div>
             </div>
           </aside>
         </div>
+
+        {previewImageSrc ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewName || strings.outputTitle}
+            className="cb-previewOverlay"
+          >
+            <div className="cb-previewCard">
+              <div className="cb-previewHeader">
+                <div className="cb-ellipsis cb-previewTitle" title={previewPath ?? undefined}>
+                  {previewName}
+                </div>
+                <button className="cb-btn" type="button" onClick={() => setPreviewPath(null)}>
+                  X
+                </button>
+              </div>
+              <img
+                src={previewImageSrc}
+                alt={previewName || strings.outputTitle}
+                className="cb-previewImage"
+              />
+            </div>
+          </div>
+        ) : null}
 
         <footer className="cb-footer">
           <div className="cb-footerMeta">
