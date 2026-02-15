@@ -21,7 +21,7 @@ function isPosition(value: unknown): value is Position {
 }
 
 function clampSizePercent(value: number): number {
-  return Math.min(50, Math.max(1, value));
+  return Math.min(300, Math.max(1, value));
 }
 
 function clampUpdateCheckIntervalMins(value: number): number {

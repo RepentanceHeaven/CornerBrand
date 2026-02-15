@@ -34,7 +34,7 @@ impl TryFrom<StampSettingsInput> for StampSettings {
 
         let size_ratio = if let Some(size_percent) = value.size_percent {
             if size_percent.is_finite() {
-                f64::from(size_percent.clamp(1.0, 50.0) / 100.0)
+                f64::from(size_percent.clamp(1.0, 300.0) / 100.0)
             } else {
                 match value.size_preset.as_str() {
                     "작음" => 0.08,

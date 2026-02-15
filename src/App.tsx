@@ -44,6 +44,7 @@ type NoticeState = {
 
 const UPDATE_TOAST_ROLE = "status";
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "bmp", "gif", "svg"]);
+const PREVIEW_MAX_SIDE_PX = 1600;
 
 function getPathExtension(path: string) {
   const normalized = path.replace(/\\/g, "/");
@@ -55,11 +56,63 @@ function isImagePath(path: string) {
   return IMAGE_EXTENSIONS.has(getPathExtension(path));
 }
 
+function normalizePathForMatch(path: string) {
+  return path.replace(/\\/g, "/").toLowerCase();
+}
+
+function isCornerBrandOutputPath(path: string) {
+  const normalized = normalizePathForMatch(path);
+  const segments = normalized.split("/").filter(Boolean);
+  const baseName = segments[segments.length - 1] ?? "";
+
+  return (
+    segments.includes("cornerbrand_output") ||
+    segments.includes("cornerbrand-preview") ||
+    baseName.includes("_cornerbrand.") ||
+    baseName.includes("_cornerbrand(")
+  );
+}
+
 function isTauriRuntime() {
   return (
     typeof window !== "undefined" &&
     ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
   );
+}
+
+function clampPercent(value: number, fallback: number) {
+  return Number.isFinite(value) ? Math.min(300, Math.max(1, Math.round(value))) : fallback;
+}
+
+function resolveCornerPosition(
+  position: CornerBrandSettings["position"],
+  imageWidth: number,
+  imageHeight: number,
+  logoWidth: number,
+  logoHeight: number,
+) {
+  const maxX = Math.max(0, imageWidth - logoWidth);
+  const maxY = Math.max(0, imageHeight - logoHeight);
+
+  switch (position) {
+    case "좌상단":
+      return { x: 0, y: 0 };
+    case "우상단":
+      return { x: maxX, y: 0 };
+    case "좌하단":
+      return { x: 0, y: maxY };
+    case "우하단":
+    default:
+      return { x: maxX, y: maxY };
+  }
+}
+
+async function loadImageElement(src: string) {
+  const image = new Image();
+  image.decoding = "async";
+  image.src = src;
+  await image.decode();
+  return image;
 }
 
 function toErrorDetail(error: unknown) {
@@ -84,7 +137,6 @@ function App() {
   const [logoOk, setLogoOk] = useState(true);
   const [headerIconSrc, setHeaderIconSrc] = useState("/icon.png");
   const [settings, setSettings] = useState<CornerBrandSettings>(() => loadSettings());
-  const [customLogoPath, setCustomLogoPath] = useState<string | null>(null);
   const [customOutputDir, setCustomOutputDir] = useState<string | null>(null);
 
   const [files, setFiles] = useState<InputFile[]>([]);
@@ -94,6 +146,8 @@ function App() {
   const [progressDone, setProgressDone] = useState(0);
   const [progressFileName, setProgressFileName] = useState<string | null>(null);
   const [results, setResults] = useState<StampFileResult[]>([]);
+  const [selectedResultInputPath, setSelectedResultInputPath] = useState<string | null>(null);
+  const [fileSizePercentByPath, setFileSizePercentByPath] = useState<Record<string, number>>({});
   const activeRequestIdRef = useRef<string | null>(null);
   const updateCheckStartedRef = useRef(false);
   const [isUpdateChecking, setIsUpdateChecking] = useState(false);
@@ -106,6 +160,9 @@ function App() {
   });
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewName, setPreviewName] = useState<string>("");
+  const [selectedPreviewImageFailedPath, setSelectedPreviewImageFailedPath] = useState<string | null>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const previewCompositeRequestIdRef = useRef(0);
 
   const runUpdateCheck = useCallback(async ({ showNoUpdateNotice }: { showNoUpdateNotice: boolean }) => {
     if (!isTauriRuntime() || isUpdateChecking) return;
@@ -203,6 +260,8 @@ function App() {
     saveSettings(settings);
   }, [settings]);
 
+  // (preview debounce removed) intentionally no cleanup needed
+
   useEffect(() => {
     if (!isTauriRuntime()) {
       setAppVersion("-");
@@ -227,6 +286,51 @@ function App() {
 
   const { position, sizePercent } = settings;
 
+  const addInputPaths = useCallback(
+    (paths: string[]) => {
+      let addedPaths: string[] = [];
+      let excludedOutputCount = 0;
+      let rejectedCount = 0;
+      const filteredPaths: string[] = [];
+
+      for (const path of paths) {
+        if (isCornerBrandOutputPath(path)) {
+          excludedOutputCount += 1;
+          continue;
+        }
+
+        filteredPaths.push(path);
+      }
+
+      setFiles((prev) => {
+        const prevPaths = new Set(prev.map((file) => file.path));
+        const { next, rejected } = addPathsUnique(prev, filteredPaths);
+        rejectedCount = rejected.length;
+        addedPaths = next.filter((file) => !prevPaths.has(file.path)).map((file) => file.path);
+        return next;
+      });
+
+      if (excludedOutputCount > 0 || rejectedCount > 0) {
+        const notices: string[] = [];
+        if (excludedOutputCount > 0) {
+          notices.push(strings.excludedOutputFiles.replace("{count}", String(excludedOutputCount)));
+        }
+        if (rejectedCount > 0) {
+          notices.push(strings.unsupportedFiles);
+        }
+
+        setNotice({ kind: "info", message: notices.join(" ") });
+      }
+
+      if (addedPaths.length > 0) {
+        setSelectedResultInputPath((prev) => prev ?? addedPaths[0] ?? null);
+      }
+
+      // No automatic backend run on add.
+    },
+    [],
+  );
+
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
@@ -235,11 +339,7 @@ function App() {
         unlisten = await getCurrentWindow().listen<{ paths: string[] }>(
           "tauri://drag-drop",
           (event) => {
-            setFiles((prev) => {
-              const { next, rejected } = addPathsUnique(prev, event.payload.paths);
-              if (rejected.length) setNotice({ kind: "info", message: strings.unsupportedFiles });
-              return next;
-            });
+            addInputPaths(event.payload.paths);
           },
         );
       } catch {
@@ -254,7 +354,7 @@ function App() {
         // ignore
       }
     };
-  }, []);
+  }, [addInputPaths]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -292,13 +392,6 @@ function App() {
     };
   }, []);
 
-  function createRequestId() {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-
   async function pickFiles() {
     setNotice(null);
     try {
@@ -313,31 +406,7 @@ function App() {
       if (!result) return;
 
       const paths = Array.isArray(result) ? result : [result];
-      setFiles((prev) => {
-        const { next, rejected } = addPathsUnique(prev, paths);
-        if (rejected.length) setNotice({ kind: "info", message: strings.unsupportedFiles });
-        return next;
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "";
-      setNotice({
-        kind: "error",
-        message: detail ? `${strings.pickerFailed} ${detail}` : strings.pickerFailed,
-      });
-    }
-  }
-
-  async function pickLogoFile() {
-    setNotice(null);
-    try {
-      const result = await open({
-        multiple: false,
-        directory: false,
-        filters: [{ name: "이미지", extensions: ["jpg", "jpeg", "png", "webp"] }],
-      });
-
-      if (!result || Array.isArray(result)) return;
-      setCustomLogoPath(result);
+      addInputPaths(paths);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "";
       setNotice({
@@ -366,34 +435,89 @@ function App() {
     }
   }
 
-  async function runStampBatch() {
-    if (files.length === 0 || isProcessing) return;
+  const requestCancelBatch = useCallback(async () => {
+    const requestId = activeRequestIdRef.current;
+    if (!isProcessing || !requestId) return;
+
+    try {
+      await invoke<boolean>("cancel_stamp_batch", { requestId });
+      setNotice({ kind: "info", message: "취소 요청됨" });
+    } catch (error) {
+      const detail = typeof error === "string" ? error : toErrorDetail(error);
+      setNotice({
+        kind: "error",
+        message: detail ? `${strings.runFailed} ${detail}` : strings.runFailed,
+      });
+    }
+  }, [isProcessing]);
+
+  const runStampBatch = useCallback(async (pathsOverride?: string[]) => {
+    const targetPaths =
+      pathsOverride && pathsOverride.length > 0 ? pathsOverride : files.map((file) => file.path);
+
+    if (targetPaths.length === 0 || isProcessing) return;
     setNotice(null);
     setIsProcessing(true);
-    setProgressTotal(files.length);
+    setProgressTotal(targetPaths.length);
     setProgressDone(0);
     setProgressFileName(null);
 
-    const requestId = createRequestId();
+    const requestId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     activeRequestIdRef.current = requestId;
+    const targetSizePercentByPath = Object.fromEntries(
+      targetPaths.map((path) => [path, fileSizePercentByPath[path] ?? sizePercent]),
+    );
+    const command = "stamp_batch_progress";
 
     try {
-      const stampResults = await invoke<StampFileResult[]>("stamp_batch_progress", {
-        paths: files.map((f) => f.path),
+      const stampResults = await invoke<StampFileResult[]>(command, {
+        paths: targetPaths,
         settings: {
           position,
           sizePercent,
           marginPercent: 0,
         },
-        logoPath: customLogoPath,
+        sizePercentByPath: targetSizePercentByPath,
         outputDir: customOutputDir,
         requestId,
       });
-      setResults(stampResults);
+      let nextSelected: string | null = null;
+      setResults((prev) => {
+        const byPath = new Map(prev.map((result) => [result.inputPath, result]));
+        for (const result of stampResults) {
+          byPath.set(result.inputPath, result);
+        }
+
+        const ordered = files
+          .map((file) => byPath.get(file.path))
+          .filter((value): value is StampFileResult => Boolean(value));
+
+        const extras = Array.from(byPath.values()).filter(
+          (result) => !files.some((file) => file.path === result.inputPath),
+        );
+        const merged = [...ordered, ...extras];
+        if (
+          selectedResultInputPath &&
+          merged.some((result) => result.inputPath === selectedResultInputPath)
+        ) {
+          nextSelected = selectedResultInputPath;
+        } else {
+          nextSelected =
+            merged.find((result) => result.ok)?.inputPath ??
+            merged[0]?.inputPath ??
+            null;
+        }
+        return merged;
+      });
+      setSelectedResultInputPath(nextSelected);
     } catch (error) {
       const detail = typeof error === "string" ? error : strings.runFailed;
       setNotice({ kind: "error", message: `${strings.runFailed} ${detail}` });
       setResults([]);
+      setSelectedResultInputPath(null);
     } finally {
       activeRequestIdRef.current = null;
       setProgressTotal(0);
@@ -401,15 +525,19 @@ function App() {
       setProgressFileName(null);
       setIsProcessing(false);
     }
-  }
+  }, [
+    customOutputDir,
+    fileSizePercentByPath,
+    files,
+    isProcessing,
+    position,
+    selectedResultInputPath,
+    sizePercent,
+  ]);
 
-  async function openPreviewOrPath(path: string, name: string) {
-    if (isImagePath(path)) {
-      setPreviewPath(path);
-      setPreviewName(name);
-      return;
-    }
+  // No automatic preview generation.
 
+  async function openExternalPath(path: string) {
     try {
       await openPath(path);
     } catch (error) {
@@ -421,9 +549,19 @@ function App() {
     }
   }
 
+  async function openPreviewOrPath(path: string, name: string) {
+    if (isImagePath(path)) {
+      setPreviewPath(path);
+      setPreviewName(name);
+      return;
+    }
+
+    await openExternalPath(path);
+  }
+
   const runHint = useMemo(() => {
     if (files.length === 0) return "파일을 먼저 추가하세요";
-    return isProcessing ? strings.processing : strings.run;
+    return isProcessing ? strings.processing : strings.save;
   }, [files.length, isProcessing]);
 
   const resultSummary = useMemo(() => {
@@ -433,15 +571,205 @@ function App() {
     return { total, success, failure };
   }, [results]);
 
-  const logoPreviewSrc = useMemo(
-    () => (customLogoPath ? convertFileSrc(customLogoPath) : "/logo.webp"),
-    [customLogoPath],
-  );
+  const logoPreviewSrc = "/logo.webp";
 
   const previewImageSrc = useMemo(
     () => (previewPath ? convertFileSrc(previewPath) : null),
     [previewPath],
   );
+
+  const resultByInputPath = useMemo(
+    () => new Map(results.map((result) => [result.inputPath, result])),
+    [results],
+  );
+
+  const resultsCompleteForFiles = useMemo(() => {
+    if (files.length === 0) return false;
+    for (const file of files) {
+      if (!resultByInputPath.has(file.path)) return false;
+    }
+    return true;
+  }, [files, resultByInputPath]);
+
+  type OutputNavMode = "inputs" | "results";
+  const outputNavMode: OutputNavMode = resultsCompleteForFiles ? "results" : "inputs";
+
+  const outputNavPaths = useMemo(() => {
+    if (outputNavMode === "results") return results.map((result) => result.inputPath);
+    return files.map((file) => file.path);
+  }, [files, outputNavMode, results]);
+
+  const selectedNavIndex = useMemo(() => {
+    if (!selectedResultInputPath) return -1;
+    return outputNavPaths.indexOf(selectedResultInputPath);
+  }, [outputNavPaths, selectedResultInputPath]);
+
+  const selectedNavPosition = selectedNavIndex >= 0 ? selectedNavIndex + 1 : 1;
+
+  useEffect(() => {
+    if (outputNavPaths.length === 0) {
+      if (selectedResultInputPath !== null) {
+        setSelectedResultInputPath(null);
+      }
+      return;
+    }
+
+    if (selectedResultInputPath && outputNavPaths.includes(selectedResultInputPath)) return;
+    setSelectedResultInputPath(outputNavPaths[0] ?? null);
+  }, [outputNavPaths, selectedResultInputPath]);
+
+  const selectedInputPath = selectedResultInputPath;
+
+  const selectedInputFile = useMemo(() => {
+    if (!selectedInputPath) return null;
+    return files.find((file) => file.path === selectedInputPath) ?? null;
+  }, [files, selectedInputPath]);
+
+  const selectedSavedResult = useMemo(() => {
+    if (!selectedInputPath) return null;
+    return resultByInputPath.get(selectedInputPath) ?? null;
+  }, [resultByInputPath, selectedInputPath]);
+
+  const isShowingSavedResult = outputNavMode === "results" && selectedSavedResult !== null;
+
+  const selectedInputName = useMemo(() => {
+    if (!selectedInputPath) return "";
+    if (selectedInputFile?.name) return selectedInputFile.name;
+    return selectedInputPath.replace(/\\/g, "/").split("/").pop() ?? selectedInputPath;
+  }, [selectedInputFile?.name, selectedInputPath]);
+
+  const selectedDisplayPath = useMemo(() => {
+    if (isShowingSavedResult && selectedSavedResult?.ok && selectedSavedResult.outputPath) {
+      return selectedSavedResult.outputPath;
+    }
+    return selectedInputPath;
+  }, [isShowingSavedResult, selectedInputPath, selectedSavedResult]);
+
+  const selectedDisplayName = useMemo(() => {
+    if (!selectedDisplayPath) return "";
+    return selectedDisplayPath.replace(/\\/g, "/").split("/").pop() ?? selectedDisplayPath;
+  }, [selectedDisplayPath]);
+
+  const selectedInputIsImage = useMemo(
+    () => (selectedInputPath ? isImagePath(selectedInputPath) : false),
+    [selectedInputPath],
+  );
+
+  const selectedFileSizePercent = useMemo(() => {
+    if (!selectedInputPath) return sizePercent;
+    return fileSizePercentByPath[selectedInputPath] ?? sizePercent;
+  }, [fileSizePercentByPath, selectedInputPath, sizePercent]);
+
+  const selectedCanvasSourcePath = selectedInputIsImage ? selectedInputPath : null;
+
+  const selectedCanvasSourceSrc = useMemo(() => {
+    if (!selectedCanvasSourcePath) return null;
+    return convertFileSrc(selectedCanvasSourcePath);
+  }, [selectedCanvasSourcePath]);
+
+  useEffect(() => {
+    if (!selectedInputIsImage || !selectedCanvasSourceSrc || !selectedCanvasSourcePath) {
+      return;
+    }
+
+    const requestId = previewCompositeRequestIdRef.current + 1;
+    previewCompositeRequestIdRef.current = requestId;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [sourceImage, logoImage] = await Promise.all([
+          loadImageElement(selectedCanvasSourceSrc),
+          loadImageElement(logoPreviewSrc),
+        ]);
+
+        if (cancelled || requestId !== previewCompositeRequestIdRef.current) return;
+
+        const sourceWidth = Math.max(1, sourceImage.naturalWidth || sourceImage.width || 1);
+        const sourceHeight = Math.max(1, sourceImage.naturalHeight || sourceImage.height || 1);
+        const scaleToClamp = Math.min(1, PREVIEW_MAX_SIDE_PX / Math.max(sourceWidth, sourceHeight));
+        const previewWidth = Math.max(1, Math.round(sourceWidth * scaleToClamp));
+        const previewHeight = Math.max(1, Math.round(sourceHeight * scaleToClamp));
+
+        const shortSide = Math.min(previewWidth, previewHeight);
+        const targetMax = Math.max(1, Math.round(shortSide * (selectedFileSizePercent / 100)));
+        const logoNaturalWidth = Math.max(1, logoImage.naturalWidth || logoImage.width || 1);
+        const logoNaturalHeight = Math.max(1, logoImage.naturalHeight || logoImage.height || 1);
+        const logoMax = Math.max(logoNaturalWidth, logoNaturalHeight);
+        const logoScale = targetMax / logoMax;
+        const targetLogoWidth = Math.max(1, Math.round(logoNaturalWidth * logoScale));
+        const targetLogoHeight = Math.max(1, Math.round(logoNaturalHeight * logoScale));
+        const { x, y } = resolveCornerPosition(
+          position,
+          previewWidth,
+          previewHeight,
+          targetLogoWidth,
+          targetLogoHeight,
+        );
+
+        const canvas = previewCanvasRef.current;
+        if (!canvas) return;
+
+        canvas.width = previewWidth;
+        canvas.height = previewHeight;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          setSelectedPreviewImageFailedPath(selectedCanvasSourcePath);
+          return;
+        }
+
+        context.clearRect(0, 0, previewWidth, previewHeight);
+        context.drawImage(sourceImage, 0, 0, previewWidth, previewHeight);
+        context.drawImage(logoImage, x, y, targetLogoWidth, targetLogoHeight);
+
+        if (!cancelled && requestId === previewCompositeRequestIdRef.current) {
+          setSelectedPreviewImageFailedPath(null);
+        }
+      } catch {
+        if (!cancelled && requestId === previewCompositeRequestIdRef.current) {
+          setSelectedPreviewImageFailedPath(selectedCanvasSourcePath);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    position,
+    selectedFileSizePercent,
+    selectedCanvasSourcePath,
+    selectedCanvasSourceSrc,
+    selectedInputIsImage,
+  ]);
+
+  const selectedResultCanRenderCanvas =
+    selectedInputIsImage && Boolean(selectedCanvasSourcePath) && Boolean(selectedCanvasSourceSrc);
+
+  const selectedPreviewImageFailed =
+    selectedInputIsImage &&
+    Boolean(selectedCanvasSourcePath) &&
+    selectedPreviewImageFailedPath === selectedCanvasSourcePath;
+
+  const applySelectedSizeToAll = useCallback(() => {
+    const clamped = clampPercent(selectedFileSizePercent, DEFAULT_SETTINGS.sizePercent);
+
+    setSettings((prev) => ({
+      ...prev,
+      sizePercent: clamped,
+    }));
+    setFileSizePercentByPath({});
+  }, [selectedFileSizePercent]);
+
+  const moveSelectedResult = useCallback((direction: -1 | 1) => {
+    if (outputNavPaths.length === 0) return;
+
+    const baseIndex = selectedNavIndex >= 0 ? selectedNavIndex : 0;
+    const nextIndex = (baseIndex + direction + outputNavPaths.length) % outputNavPaths.length;
+    const nextPath = outputNavPaths[nextIndex];
+    if (!nextPath) return;
+    setSelectedResultInputPath(nextPath);
+  }, [outputNavPaths, selectedNavIndex]);
 
   return (
     <div className="cb-shell">
@@ -474,10 +802,17 @@ function App() {
               type="button"
               disabled={files.length === 0 || isProcessing}
               title={runHint}
-              onClick={runStampBatch}
-            >
-              {isProcessing ? strings.processing : strings.run}
+               onClick={() => {
+                 void runStampBatch();
+               }}
+             >
+              {isProcessing ? strings.processing : strings.save}
             </button>
+            {isProcessing ? (
+              <button className="cb-btn" type="button" onClick={() => void requestCancelBatch()}>
+                취소
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -501,7 +836,205 @@ function App() {
         ) : null}
 
         <div className="cb-body">
-          <section className="cb-card" aria-label={strings.filesTitle}>
+          <main className="cb-mainCanvas" aria-label={strings.outputTitle}>
+            <section className="cb-card cb-settingsOutputCard" aria-label={strings.outputTitle}>
+              <div className="cb-cardHeader">
+                <h2>{strings.outputTitle}</h2>
+                <p>{strings.outputHelp}</p>
+              </div>
+              <div className="cb-cardBody">
+                {files.length === 0 ? (
+                  <div className="cb-note">{strings.placeholderRight}</div>
+                ) : (
+                  <>
+                    {results.length > 0 ? (
+                      <div className="cb-note cb-noteBottom">
+                        {strings.resultSummaryPrefix} {resultSummary.success}
+                        {strings.resultSummaryDivider}
+                        {resultSummary.failure}
+                        {strings.resultSummaryTail}
+                        {resultSummary.total}
+                        {strings.resultSummaryTotalUnit}
+                      </div>
+                    ) : null}
+
+                    <div className="cb-outputLayout">
+                      <div className="cb-outputPreviewPanel">
+                        <div className="cb-outputPreviewHeader">
+                          <div className="cb-minWidth0">
+                            <div className="cb-ellipsis cb-outputPreviewTitle" title={selectedDisplayPath ?? undefined}>
+                              {selectedDisplayName || strings.outputTitle}
+                            </div>
+                            <div className="cb-note cb-ellipsis" title={selectedInputPath ?? undefined}>
+                              원본: {selectedInputName || "-"}
+                            </div>
+                          </div>
+                          {isShowingSavedResult && selectedSavedResult ? (
+                            <div className="cb-badge">
+                              {selectedSavedResult.ok ? strings.resultSuccess : strings.resultFailure}
+                            </div>
+                          ) : (
+                            <div className="cb-badge">미리보기</div>
+                          )}
+                        </div>
+
+                        <div className="cb-outputPreviewControls">
+                          <div className="cb-field cb-outputPreviewField">
+                            <label htmlFor="cb-selected-size">로고 크기</label>
+                            <input
+                              id="cb-selected-size"
+                              className="cb-range"
+                              type="range"
+                              min={1}
+                              max={300}
+                              step={1}
+                              value={selectedFileSizePercent}
+                              onChange={(event) => {
+                                if (!selectedInputPath) return;
+                                const nextSizePercent = Number(event.currentTarget.value);
+                                const clamped = clampPercent(nextSizePercent, sizePercent);
+                                setFileSizePercentByPath((prev) => ({
+                                  ...prev,
+                                  [selectedInputPath]: clamped,
+                                }));
+                              }}
+                            />
+                            <div className="cb-note cb-noteBlockTight">현재 선택: {selectedFileSizePercent}%</div>
+                          </div>
+                          <div className="cb-field cb-outputPreviewField">
+                            <label htmlFor="cb-selected-position">삽입 위치</label>
+                            <select
+                              id="cb-selected-position"
+                              className="cb-select"
+                              value={position}
+                              onChange={(event) => {
+                                const nextPosition =
+                                  event.currentTarget.value as CornerBrandSettings["position"];
+
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  position: nextPosition,
+                                }));
+                              }}
+                            >
+                              <option value="좌상단">좌상단</option>
+                              <option value="우상단">우상단</option>
+                              <option value="좌하단">좌하단</option>
+                              <option value="우하단">우하단</option>
+                            </select>
+                          </div>
+                          <button
+                            className="cb-btn"
+                            type="button"
+                            disabled={isProcessing || files.length === 0}
+                            onClick={applySelectedSizeToAll}
+                          >
+                            로고 크기 전체 적용
+                          </button>
+                        </div>
+
+                        {selectedInputIsImage ? (
+                          selectedResultCanRenderCanvas && !selectedPreviewImageFailed ? (
+                            <button
+                              type="button"
+                              className="cb-outputPreviewImageButton"
+                              onClick={() => {
+                                if (!selectedDisplayPath) return;
+                                setPreviewPath(selectedDisplayPath);
+                                setPreviewName(selectedDisplayName);
+                              }}
+                            >
+                              <canvas
+                                ref={previewCanvasRef}
+                                aria-label={selectedDisplayName}
+                                className="cb-outputPreviewImage"
+                              />
+                            </button>
+                          ) : (
+                            <div className="cb-outputPreviewFallback">
+                              <div className="cb-outputPreviewDocButton cb-outputPreviewDocStatic">
+                                <span className="cb-outputPreviewDocText">
+                                  {selectedResultCanRenderCanvas
+                                    ? "미리보기를 불러오지 못했습니다."
+                                    : "미리보기 불가"}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                className="cb-btn cb-outputPreviewOpenButton"
+                                onClick={() => {
+                                  if (!selectedDisplayPath) return;
+                                  void openExternalPath(selectedDisplayPath);
+                                }}
+                              >
+                                파일 열기
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                          <div className="cb-outputPreviewFallback">
+                            {!isShowingSavedResult ? (
+                              <div className="cb-note cb-noteBottom">
+                                PDF는 저장하기 후 결과로 확인할 수 있습니다.
+                              </div>
+                            ) : null}
+                            <div className="cb-outputPreviewDocButton cb-outputPreviewDocStatic">
+                              <span className="cb-outputPreviewDocText">미리보기 불가</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="cb-btn cb-outputPreviewOpenButton"
+                              onClick={() => {
+                                if (!selectedDisplayPath) return;
+                                void openExternalPath(selectedDisplayPath);
+                              }}
+                            >
+                              파일 열기
+                            </button>
+                          </div>
+                        )}
+
+                        {isShowingSavedResult && selectedSavedResult && !selectedSavedResult.ok ? (
+                          <div className="cb-note cb-noteTop4">
+                            {strings.errorLabel} {selectedSavedResult.error ?? strings.unknownError}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <section className="cb-outputCarousel" aria-label={strings.outputTitle}>
+                        <div className="cb-outputCarouselNav">
+                          <button
+                            className="cb-btn"
+                            type="button"
+                            disabled={outputNavPaths.length <= 1}
+                            onClick={() => moveSelectedResult(-1)}
+                          >
+                            이전
+                          </button>
+                          <div className="cb-note cb-outputCarouselCounter">
+                            {outputNavPaths.length === 0
+                              ? "0/0"
+                              : `${selectedNavPosition}/${outputNavPaths.length}`}
+                          </div>
+                          <button
+                            className="cb-btn"
+                            type="button"
+                            disabled={outputNavPaths.length <= 1}
+                            onClick={() => moveSelectedResult(1)}
+                          >
+                            다음
+                          </button>
+                        </div>
+                      </section>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+          </main>
+
+          <aside className="cb-sidebar" aria-label={strings.settingsTitle}>
+            <section className="cb-card" aria-label={strings.filesTitle}>
             <div className="cb-cardHeader">
               <h2>{strings.filesTitle}</h2>
               <p>{strings.filesHelp}</p>
@@ -533,6 +1066,8 @@ function App() {
                   onClick={() => {
                     setFiles([]);
                     setResults([]);
+                    setSelectedResultInputPath(null);
+                    setFileSizePercentByPath({});
                   }}
                 >
                   {strings.clearList}
@@ -586,6 +1121,13 @@ function App() {
                             event.stopPropagation();
                             setFiles((prev) => prev.filter((x) => x.path !== f.path));
                             setResults((prev) => prev.filter((x) => x.inputPath !== f.path));
+                            setFileSizePercentByPath((prev) => {
+                              if (!(f.path in prev)) return prev;
+                              const next = { ...prev };
+                              delete next[f.path];
+                              return next;
+                            });
+                            setSelectedResultInputPath((prev) => (prev === f.path ? null : prev));
                           }}
                           aria-label={strings.removeOne}
                           title={strings.removeOne}
@@ -600,78 +1142,13 @@ function App() {
             </div>
           </section>
 
-          <aside className="cb-card" aria-label={strings.settingsTitle}>
+            <section className="cb-card" aria-label={strings.settingsTitle}>
             <div className="cb-cardHeader">
               <h2>{strings.settingsTitle}</h2>
               <p>{strings.settingsHelp}</p>
             </div>
             <div className="cb-cardBody cb-settingsBody">
               <div className="cb-settingsGrid">
-                <div className="cb-card cb-settingsOutputCard">
-                  <div className="cb-cardHeader">
-                    <h2>{strings.outputTitle}</h2>
-                    <p>{strings.outputHelp}</p>
-                  </div>
-                  <div className="cb-cardBody">
-                    {results.length === 0 ? (
-                      <div className="cb-note">{strings.placeholderRight}</div>
-                    ) : (
-                      <>
-                        <div className="cb-note cb-noteBottom">
-                          {strings.resultSummaryPrefix} {resultSummary.success}
-                          {strings.resultSummaryDivider}
-                          {resultSummary.failure}
-                          {strings.resultSummaryTail}
-                          {resultSummary.total}
-                          {strings.resultSummaryTotalUnit}
-                        </div>
-                        <div className="cb-listScroll cb-listScrollOutput cb-scrollWrapOutput">
-                          <section className="cb-list" aria-label={strings.outputTitle}>
-                            {results.map((result) => {
-                              const inputFileName =
-                                result.inputPath.replace(/\\/g, "/").split("/").pop() ?? result.inputPath;
-                              const outputFileName = result.outputPath
-                                ? result.outputPath.replace(/\\/g, "/").split("/").pop() ?? result.outputPath
-                                : inputFileName;
-                              const primaryFileName =
-                                result.ok && result.outputPath ? outputFileName : inputFileName;
-
-                              return (
-                                <button
-                                  className="cb-listItem cb-outputListButton"
-                                  key={result.inputPath}
-                                  type="button"
-                                  onClick={() => {
-                                    if (result.ok && result.outputPath) {
-                                      void openPreviewOrPath(result.outputPath, outputFileName);
-                                      return;
-                                    }
-                                    void openPreviewOrPath(result.inputPath, inputFileName);
-                                  }}
-                                >
-                                  <div className="cb-minWidth0">
-                                    <div className="cb-ellipsis" title={primaryFileName}>
-                                      {primaryFileName}
-                                    </div>
-                                    {!result.ok ? (
-                                      <div className="cb-note cb-noteTop4">
-                                        {strings.errorLabel} {result.error ?? strings.unknownError}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <div className="cb-badge">
-                                    {result.ok ? strings.resultSuccess : strings.resultFailure}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </section>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
                 <section className="cb-settingsSection" aria-label="로고/저장">
                   <h3 className="cb-settingsHeading">로고/저장</h3>
 
@@ -681,27 +1158,6 @@ function App() {
                       <p>{strings.logoImageHelp}</p>
                     </div>
                     <div className="cb-cardBody">
-                      <div className="cb-inlineButtons">
-                        <button
-                          className="cb-btn"
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={pickLogoFile}
-                        >
-                          {strings.pickLogoFile}
-                        </button>
-                        <button
-                          className="cb-btn"
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={() => setCustomLogoPath(null)}
-                        >
-                          {strings.useDefaultLogo}
-                        </button>
-                      </div>
-                      <div className="cb-note cb-noteBlock" title={customLogoPath ?? strings.defaultLogoPath}>
-                        {customLogoPath ?? strings.defaultLogoPath}
-                      </div>
                       <div className="cb-logoPreview cb-logoPreviewSpacing">
                         <img
                           src={logoPreviewSrc}
@@ -750,61 +1206,9 @@ function App() {
                   </div>
                 </section>
 
-                <section className="cb-settingsSection" aria-label="실행 설정">
-                  <h3 className="cb-settingsHeading">실행 설정</h3>
-
-                  <div className="cb-card cb-settingsSubcard">
-                    <div className="cb-cardBody cb-settingsFields">
-                      <div className="cb-field">
-                        <label htmlFor="cb-position">{strings.positionLabel}</label>
-                        <select
-                          id="cb-position"
-                          className="cb-select"
-                          value={position}
-                          onChange={(e) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              position: e.currentTarget.value as CornerBrandSettings["position"],
-                            }))
-                          }
-                        >
-                          <option value="좌상단">좌상단</option>
-                          <option value="우상단">우상단</option>
-                          <option value="좌하단">좌하단</option>
-                          <option value="우하단">우하단</option>
-                        </select>
-                      </div>
-
-                      <div className="cb-field">
-                        <label htmlFor="cb-size">{strings.sizeLabel}</label>
-                        <input
-                          id="cb-size"
-                          className="cb-range"
-                          type="range"
-                          min={1}
-                          max={50}
-                          step={1}
-                          value={sizePercent}
-                          onChange={(e) => {
-                            const nextSizePercent = Number(e.currentTarget.value);
-                            setSettings((prev) => ({
-                              ...prev,
-                              sizePercent: Number.isFinite(nextSizePercent)
-                                ? Math.min(50, Math.max(1, Math.round(nextSizePercent)))
-                                : DEFAULT_SETTINGS.sizePercent,
-                            }));
-                          }}
-                        />
-                        <div className="cb-note cb-noteBlockTight">
-                          현재 선택: {sizePercent}%
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
               </div>
             </div>
+            </section>
           </aside>
         </div>
 

@@ -4,7 +4,20 @@ use crate::pdf_engine;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static CANCELLATION_REGISTRY: OnceLock<Mutex<BTreeMap<String, bool>>> = OnceLock::new();
+
+pub struct BatchRequestGuard {
+    request_id: String,
+}
+
+impl Drop for BatchRequestGuard {
+    fn drop(&mut self) {
+        clear_cancellation_request(&self.request_id);
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,7 +41,15 @@ pub fn stamp_batch(
     logo_path: &Path,
     output_base_dir: Option<&Path>,
 ) -> Vec<StampFileResult> {
-    stamp_batch_with_progress(paths, settings, logo_path, output_base_dir, &mut |_| {})
+    stamp_batch_with_progress(
+        paths,
+        settings,
+        logo_path,
+        output_base_dir,
+        None,
+        &mut |_| {},
+        None,
+    )
 }
 
 pub fn stamp_batch_with_progress(
@@ -36,17 +57,35 @@ pub fn stamp_batch_with_progress(
     settings: StampSettingsInput,
     logo_path: &Path,
     output_base_dir: Option<&Path>,
+    request_id: Option<&str>,
     on_progress: &mut dyn FnMut(ProgressUpdate),
+    size_percent_by_path: Option<&BTreeMap<String, f32>>,
 ) -> Vec<StampFileResult> {
     let total = paths.len();
     let mut results = Vec::with_capacity(total);
 
     for (index, input) in paths.iter().enumerate() {
+        if let Some(request_id) = request_id {
+            if is_request_cancelled(request_id) {
+                for cancelled_input in &paths[index..] {
+                    results.push(cancelled_result(cancelled_input.clone()));
+                }
+                break;
+            }
+        }
+
+        let mut settings_for_input = settings.clone();
+        if let Some(size_percent_by_path) = size_percent_by_path {
+            if let Some(size_percent) = size_percent_by_path.get(input) {
+                settings_for_input.size_percent = Some(size_percent.clamp(1.0, 300.0));
+            }
+        }
+
         let input_path = Path::new(input);
         let result = if path_policy::detect_supported_image(input_path).is_some() {
             image_engine::stamp_images(
                 std::slice::from_ref(input),
-                settings.clone(),
+                settings_for_input.clone(),
                 logo_path,
                 output_base_dir,
             )
@@ -56,7 +95,7 @@ pub fn stamp_batch_with_progress(
         } else if path_policy::is_supported_pdf(input_path) {
             pdf_engine::stamp_pdfs(
                 std::slice::from_ref(input),
-                settings.clone(),
+                settings_for_input.clone(),
                 logo_path,
                 output_base_dir,
             )
@@ -88,6 +127,54 @@ fn unsupported_type_result(input_path: String) -> StampFileResult {
         output_path: None,
         error: Some("지원하지 않는 파일 형식입니다. (jpg/jpeg/png/webp/pdf)".to_string()),
     }
+}
+
+fn cancelled_result(input_path: String) -> StampFileResult {
+    StampFileResult {
+        input_path,
+        ok: false,
+        output_path: None,
+        error: Some("취소됨".to_string()),
+    }
+}
+
+fn cancellation_registry() -> &'static Mutex<BTreeMap<String, bool>> {
+    CANCELLATION_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub fn begin_cancellation_request(request_id: &str) -> BatchRequestGuard {
+    if let Ok(mut registry) = cancellation_registry().lock() {
+        registry.insert(request_id.to_string(), false);
+    }
+
+    BatchRequestGuard {
+        request_id: request_id.to_string(),
+    }
+}
+
+pub fn cancel_cancellation_request(request_id: &str) -> bool {
+    if let Ok(mut registry) = cancellation_registry().lock() {
+        if let Some(cancelled) = registry.get_mut(request_id) {
+            *cancelled = true;
+            return true;
+        }
+    }
+
+    false
+}
+
+fn clear_cancellation_request(request_id: &str) {
+    if let Ok(mut registry) = cancellation_registry().lock() {
+        registry.remove(request_id);
+    }
+}
+
+fn is_request_cancelled(request_id: &str) -> bool {
+    if let Ok(registry) = cancellation_registry().lock() {
+        return registry.get(request_id).copied().unwrap_or(false);
+    }
+
+    false
 }
 
 fn write_reports(
@@ -174,6 +261,15 @@ mod tests {
         image::DynamicImage::ImageRgba8(img)
             .save(path)
             .expect("write png fixture");
+    }
+
+    fn count_non_background_pixels(path: &Path, background: [u8; 4]) -> usize {
+        image::open(path)
+            .expect("open output image")
+            .to_rgba8()
+            .pixels()
+            .filter(|pixel| pixel.0 != background)
+            .count()
     }
 
     fn write_minimal_two_page_pdf(path: &Path) {
@@ -351,6 +447,163 @@ mod tests {
             .map(|arr| arr.len())
             .unwrap_or(0);
         assert_eq!(result_count, 2, "report should include both results");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stamp_batch_with_progress_marks_remaining_files_cancelled() {
+        let request_id = "cancel-test-request";
+        let _guard = begin_cancellation_request(request_id);
+        assert!(cancel_cancellation_request(request_id));
+
+        let settings = StampSettingsInput {
+            position: "우하단".to_string(),
+            size_preset: "보통".to_string(),
+            size_percent: None,
+            margin_percent: 2.0,
+        };
+
+        let paths = vec![
+            "first.unsupported".to_string(),
+            "second.unsupported".to_string(),
+        ];
+
+        let mut progress_events = 0usize;
+        let results = stamp_batch_with_progress(
+            &paths,
+            settings,
+            Path::new("logo.png"),
+            None,
+            Some(request_id),
+            &mut |_| {
+                progress_events += 1;
+            },
+            None,
+        );
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| !result.ok));
+        assert!(results
+            .iter()
+            .all(|result| result.error.as_deref() == Some("취소됨")));
+        assert_eq!(progress_events, 0);
+    }
+
+    #[test]
+    fn stamp_batch_with_progress_applies_size_override_per_path() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cornerbrand-batch-size-map-{nonce}"));
+        fs::create_dir_all(&root).expect("temp dir");
+
+        let input_a = root.join("input-a.png");
+        let input_b = root.join("input-b.png");
+        let logo_png = root.join("logo.png");
+
+        write_test_png(&input_a, 100, 100, [200, 200, 200, 255]);
+        write_test_png(&input_b, 100, 100, [200, 200, 200, 255]);
+        write_test_png(&logo_png, 10, 10, [255, 0, 0, 255]);
+
+        let settings = StampSettingsInput {
+            position: "우하단".to_string(),
+            size_preset: "보통".to_string(),
+            size_percent: None,
+            margin_percent: 0.0,
+        };
+
+        let input_a_string = input_a.to_string_lossy().to_string();
+        let input_b_string = input_b.to_string_lossy().to_string();
+        let paths = vec![input_a_string.clone(), input_b_string.clone()];
+
+        let mut size_percent_by_path = BTreeMap::new();
+        size_percent_by_path.insert(input_b_string, 40.0);
+
+        let results = stamp_batch_with_progress(
+            &paths,
+            settings,
+            &logo_png,
+            None,
+            None,
+            &mut |_| {},
+            Some(&size_percent_by_path),
+        );
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.ok), "expected all success");
+
+        let output_a = PathBuf::from(results[0].output_path.as_ref().expect("output path a"));
+        let output_b = PathBuf::from(results[1].output_path.as_ref().expect("output path b"));
+
+        let changed_pixels_a = count_non_background_pixels(&output_a, [200, 200, 200, 255]);
+        let changed_pixels_b = count_non_background_pixels(&output_b, [200, 200, 200, 255]);
+
+        assert!(changed_pixels_a > 0, "first file should be stamped");
+        assert!(
+            changed_pixels_b > changed_pixels_a * 3,
+            "override file should have a much larger logo area"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stamp_batch_with_progress_clamps_size_override_to_300() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cornerbrand-batch-size-clamp-{nonce}"));
+        fs::create_dir_all(&root).expect("temp dir");
+
+        let input_a = root.join("input-a.png");
+        let input_b = root.join("input-b.png");
+        let logo_png = root.join("logo.png");
+
+        write_test_png(&input_a, 100, 100, [200, 200, 200, 255]);
+        write_test_png(&input_b, 100, 100, [200, 200, 200, 255]);
+        write_test_png(&logo_png, 10, 10, [255, 0, 0, 255]);
+
+        let settings = StampSettingsInput {
+            position: "우하단".to_string(),
+            size_preset: "보통".to_string(),
+            size_percent: None,
+            margin_percent: 0.0,
+        };
+
+        let input_a_string = input_a.to_string_lossy().to_string();
+        let input_b_string = input_b.to_string_lossy().to_string();
+        let paths = vec![input_a_string.clone(), input_b_string.clone()];
+
+        let mut size_percent_by_path = BTreeMap::new();
+        size_percent_by_path.insert(input_a_string, 300.0);
+        size_percent_by_path.insert(input_b_string, 1000.0);
+
+        let results = stamp_batch_with_progress(
+            &paths,
+            settings,
+            &logo_png,
+            None,
+            None,
+            &mut |_| {},
+            Some(&size_percent_by_path),
+        );
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.ok), "expected all success");
+
+        let output_a = PathBuf::from(results[0].output_path.as_ref().expect("output path a"));
+        let output_b = PathBuf::from(results[1].output_path.as_ref().expect("output path b"));
+
+        let changed_pixels_a = count_non_background_pixels(&output_a, [200, 200, 200, 255]);
+        let changed_pixels_b = count_non_background_pixels(&output_b, [200, 200, 200, 255]);
+
+        assert_eq!(
+            changed_pixels_a, changed_pixels_b,
+            "1000% override should clamp to the 300% output"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

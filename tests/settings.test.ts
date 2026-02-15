@@ -22,7 +22,7 @@ test("sanitizeSettings defaults invalid position and sizePercent", () => {
 
 test("sanitizeSettings clamps sizePercent to safe range", () => {
   expect(sanitizeSettings({ sizePercent: -10 }).sizePercent).toBe(1);
-  expect(sanitizeSettings({ sizePercent: 99 }).sizePercent).toBe(50);
+  expect(sanitizeSettings({ sizePercent: 999 }).sizePercent).toBe(300);
   expect(sanitizeSettings({ sizePercent: 12.6 }).sizePercent).toBe(13);
 });
 

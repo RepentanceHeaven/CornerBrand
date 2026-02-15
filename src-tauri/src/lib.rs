@@ -5,6 +5,7 @@ mod pdf_engine;
 
 use image_engine::{StampFileResult, StampSettingsInput};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
@@ -106,6 +107,11 @@ fn stamp_batch(
 }
 
 #[tauri::command]
+fn cancel_stamp_batch(request_id: String) -> bool {
+    batch::cancel_cancellation_request(&request_id)
+}
+
+#[tauri::command]
 async fn stamp_batch_progress(
     app: AppHandle,
     paths: Vec<String>,
@@ -113,6 +119,7 @@ async fn stamp_batch_progress(
     logo_path: Option<String>,
     output_dir: Option<String>,
     request_id: String,
+    size_percent_by_path: Option<BTreeMap<String, f32>>,
 ) -> Vec<StampFileResult> {
     let logo_path = match resolve_logo_path(&app, logo_path) {
         Ok(path) => path,
@@ -136,8 +143,10 @@ async fn stamp_batch_progress(
 
     let app_for_emit = app.clone();
     let paths_for_error = paths.clone();
+    let request_id_for_work = request_id.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
+        let _request_guard = batch::begin_cancellation_request(&request_id_for_work);
         let mut emit_progress = |progress: batch::ProgressUpdate| {
             let payload = BatchProgressEvent {
                 request_id: request_id.clone(),
@@ -154,7 +163,92 @@ async fn stamp_batch_progress(
             settings,
             &logo_path,
             output_dir.as_deref(),
+            Some(&request_id_for_work),
             &mut emit_progress,
+            size_percent_by_path.as_ref(),
+        )
+    })
+    .await
+    .unwrap_or_else(|error| {
+        let message = format!("배치 처리 작업이 중단되었습니다: {error}");
+        paths_for_error
+            .into_iter()
+            .map(|input_path| StampFileResult {
+                input_path,
+                ok: false,
+                output_path: None,
+                error: Some(message.clone()),
+            })
+            .collect()
+    })
+}
+
+#[tauri::command]
+async fn stamp_batch_preview(
+    app: AppHandle,
+    paths: Vec<String>,
+    settings: StampSettingsInput,
+    logo_path: Option<String>,
+    request_id: String,
+    size_percent_by_path: Option<BTreeMap<String, f32>>,
+) -> Vec<StampFileResult> {
+    let logo_path = match resolve_logo_path(&app, logo_path) {
+        Ok(path) => path,
+        Err(e) => {
+            let message = format!("로고 파일 경로를 찾지 못했습니다: {e}");
+            return paths
+                .into_iter()
+                .map(|input_path| StampFileResult {
+                    input_path,
+                    ok: false,
+                    output_path: None,
+                    error: Some(message.clone()),
+                })
+                .collect();
+        }
+    };
+
+    let preview_output_dir = match prepare_preview_output_dir(&request_id) {
+        Ok(path) => path,
+        Err(e) => {
+            let message = format!("미리보기 출력 디렉터리를 준비하지 못했습니다: {e}");
+            return paths
+                .into_iter()
+                .map(|input_path| StampFileResult {
+                    input_path,
+                    ok: false,
+                    output_path: None,
+                    error: Some(message.clone()),
+                })
+                .collect();
+        }
+    };
+
+    let app_for_emit = app.clone();
+    let paths_for_error = paths.clone();
+    let request_id_for_work = request_id.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _request_guard = batch::begin_cancellation_request(&request_id_for_work);
+        let mut emit_progress = |progress: batch::ProgressUpdate| {
+            let payload = BatchProgressEvent {
+                request_id: request_id.clone(),
+                total: progress.total,
+                done: progress.done,
+                input_path: progress.input_path,
+                ok: progress.ok,
+            };
+            let _ = app_for_emit.emit("cornerbrand://progress", payload);
+        };
+
+        batch::stamp_batch_with_progress(
+            &paths,
+            settings,
+            &logo_path,
+            Some(preview_output_dir.as_path()),
+            Some(&request_id_for_work),
+            &mut emit_progress,
+            size_percent_by_path.as_ref(),
         )
     })
     .await
@@ -212,6 +306,22 @@ fn normalize_optional_path(value: String) -> Option<String> {
     }
 }
 
+fn prepare_preview_output_dir(request_id: &str) -> Result<PathBuf, String> {
+    let preview_dir = std::env::temp_dir()
+        .join("cornerbrand-preview")
+        .join(request_id);
+
+    if preview_dir.exists() {
+        std::fs::remove_dir_all(&preview_dir)
+            .map_err(|e| format!("기존 미리보기 디렉터리 삭제 실패: {e}"))?;
+    }
+
+    std::fs::create_dir_all(&preview_dir)
+        .map_err(|e| format!("미리보기 디렉터리 생성 실패: {e}"))?;
+
+    Ok(preview_dir)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -223,7 +333,9 @@ pub fn run() {
             stamp_images,
             stamp_pdfs,
             stamp_batch,
-            stamp_batch_progress
+            cancel_stamp_batch,
+            stamp_batch_progress,
+            stamp_batch_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

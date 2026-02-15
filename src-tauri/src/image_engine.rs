@@ -57,7 +57,7 @@ impl TryFrom<StampSettingsInput> for StampSettings {
 
         let size_ratio = if let Some(size_percent) = value.size_percent {
             if size_percent.is_finite() {
-                size_percent.clamp(1.0, 50.0) / 100.0
+                size_percent.clamp(1.0, 300.0) / 100.0
             } else {
                 match value.size_preset.as_str() {
                     "작음" => 0.08,
@@ -261,7 +261,7 @@ mod tests {
         write_test_png(&logo_path, 8, 8, [255, 0, 0, 255]);
 
         let settings: StampSettingsInput =
-            serde_json::from_str(r#"{"position":"우하단","sizePercent":50,"marginPercent":0}"#)
+            serde_json::from_str(r#"{"position":"우하단","sizePercent":300,"marginPercent":0}"#)
                 .expect("deserialize settings with sizePercent");
 
         let paths = vec![input_path.to_string_lossy().to_string()];
@@ -271,5 +271,18 @@ mod tests {
         assert!(results[0].ok, "expected success: {:?}", results[0].error);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stamp_settings_clamps_size_percent_to_300() {
+        let settings = StampSettings::try_from(StampSettingsInput {
+            position: "우하단".to_string(),
+            size_preset: "보통".to_string(),
+            size_percent: Some(999.0),
+            margin_percent: 0.0,
+        })
+        .expect("settings should be valid");
+
+        assert_eq!(settings.size_ratio, 3.0);
     }
 }
