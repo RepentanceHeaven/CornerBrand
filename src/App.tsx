@@ -60,6 +60,15 @@ function normalizePathForMatch(path: string) {
   return path.replace(/\\/g, "/").toLowerCase();
 }
 
+function getDirname(path: string) {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/g, "");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash < 0) return normalized;
+
+  const dir = normalized.slice(0, lastSlash) || "/";
+  return /^[a-zA-Z]:$/.test(dir) ? `${dir}/` : dir;
+}
+
 function isCornerBrandOutputPath(path: string) {
   const normalized = normalizePathForMatch(path);
   const segments = normalized.split("/").filter(Boolean);
@@ -630,6 +639,22 @@ function App() {
     return resultByInputPath.get(selectedInputPath) ?? null;
   }, [resultByInputPath, selectedInputPath]);
 
+  const savedOutputDir = useMemo(() => {
+    const candidates: Array<string | null | undefined> = [selectedSavedResult?.outputPath];
+    for (const result of results) {
+      candidates.push(result.outputPath);
+    }
+
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") continue;
+      const trimmed = candidate.trim();
+      if (!trimmed) continue;
+      return getDirname(trimmed);
+    }
+
+    return null;
+  }, [results, selectedSavedResult?.outputPath]);
+
   const isShowingSavedResult = outputNavMode === "results" && selectedSavedResult !== null;
 
   const selectedInputName = useMemo(() => {
@@ -771,6 +796,35 @@ function App() {
     setSelectedResultInputPath(nextPath);
   }, [outputNavPaths, selectedNavIndex]);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (previewPath) return;
+      if (outputNavPaths.length <= 1) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tagName = target.tagName;
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
+          return;
+        }
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveSelectedResult(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveSelectedResult(1);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [moveSelectedResult, outputNavPaths.length, previewPath]);
+
   return (
     <div className="cb-shell">
       <div className="cb-frame">
@@ -870,11 +924,9 @@ function App() {
                             </div>
                           </div>
                           {isShowingSavedResult && selectedSavedResult ? (
-                            <div className="cb-badge">
-                              {selectedSavedResult.ok ? strings.resultSuccess : strings.resultFailure}
-                            </div>
+                            <div className="cb-badge">저장된 결과</div>
                           ) : (
-                            <div className="cb-badge">미리보기</div>
+                            <div className="cb-badge">미리보기(저장 전)</div>
                           )}
                         </div>
 
@@ -931,6 +983,18 @@ function App() {
                           >
                             로고 크기 전체 적용
                           </button>
+                          {savedOutputDir ? (
+                            <button
+                              className="cb-btn"
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={() => {
+                                void openExternalPath(savedOutputDir);
+                              }}
+                            >
+                              저장 위치 열기
+                            </button>
+                          ) : null}
                         </div>
 
                         {selectedInputIsImage ? (
@@ -977,6 +1041,18 @@ function App() {
                               <div className="cb-note cb-noteBottom">
                                 PDF는 저장하기 후 결과로 확인할 수 있습니다.
                               </div>
+                            ) : null}
+                            {!isShowingSavedResult ? (
+                              <button
+                                type="button"
+                                className="cb-btn cb-btnPrimary cb-outputPreviewOpenButton"
+                                disabled={isProcessing || files.length === 0}
+                                onClick={() => {
+                                  void runStampBatch();
+                                }}
+                              >
+                                저장하기
+                              </button>
                             ) : null}
                             <div className="cb-outputPreviewDocButton cb-outputPreviewDocStatic">
                               <span className="cb-outputPreviewDocText">미리보기 불가</span>

@@ -37,7 +37,7 @@ jobs:
           releaseName: CornerBrand ${{ github.ref_name }}
           releaseBody: |
             태그 푸시로 자동 공개된 Windows 릴리즈입니다.
-            - 포함: 설치 파일(.exe/.msi), updater 메타데이터(latest.json), 서명 파일(.sig)
+            - 포함: 설치 파일(.exe), updater 메타데이터(latest.json), 서명 파일(.sig)
           generateReleaseNotes: true
           releaseDraft: false
           includeUpdaterJson: true
@@ -58,7 +58,7 @@ jobs:
 
           $installerAssets = $release.assets |
             Where-Object {
-              ($_.name -like "*_x64-setup.exe" -or $_.name -like "*_x64_*.msi") -and $_.name -notlike "*.sig"
+              ($_.name -like "*_x64-setup.exe") -and $_.name -notlike "*.sig"
             } |
             Sort-Object -Property name
 

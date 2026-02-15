@@ -31,7 +31,7 @@ export const strings = {
   placeholderRow: "(예시) 파일이 여기 표시됩니다",
   placeholderRight: "(예시) 실행하면 결과가 여기 표시됩니다",
   missingLogo: "아이콘 파일을 찾지 못했습니다. icon.png 또는 logo.webp를 확인하세요.",
-  excludedOutputFiles: "이미 생성된 출력 파일 {count}개를 제외했습니다.",
+  excludedOutputFiles: "이미 스탬프된 결과 파일 {count}개를 제외했습니다.",
   unsupportedFiles: "지원하지 않는 파일 형식이 포함되어 제외했습니다.",
   clearList: "목록 비우기",
   removeOne: "삭제",
