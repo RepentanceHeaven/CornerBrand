@@ -82,6 +82,8 @@
   appearance: none;
   border: 1px solid var(--cb-border-strong);
   background: var(--cb-surface-strong);
+  color: var(--cb-ink-1);
+  -webkit-text-fill-color: var(--cb-ink-1);
   padding: 10px 12px;
   border-radius: 12px;
   cursor: pointer;
