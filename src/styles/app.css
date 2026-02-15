@@ -274,7 +274,7 @@
   border-top: 1px solid var(--cb-border);
   padding-top: 12px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .cb-scrollWrapFiles,
@@ -285,11 +285,11 @@
 }
 
 .cb-scrollWrapFiles {
-  max-height: 240px;
+  max-height: 188px;
 }
 
 .cb-scrollWrapOutput {
-  max-height: 380px;
+  max-height: 320px;
 }
 
 .cb-scrollWrapFiles::-webkit-scrollbar,
@@ -313,11 +313,12 @@
 .cb-listItem {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 10px;
+  gap: 8px;
+  padding: 7px 8px;
   border: 1px solid var(--cb-border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: rgba(24, 34, 47, 0.82);
+  font-size: 12px;
 }
 
 .cb-fileNameButton {
@@ -328,6 +329,8 @@
   background: none;
   color: var(--cb-ink-1);
   cursor: pointer;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .cb-fileNameButton:hover {
@@ -368,7 +371,7 @@
 .cb-listItemActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .cb-minWidth0 {

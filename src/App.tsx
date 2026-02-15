@@ -628,12 +628,13 @@ function App() {
                         <div className="cb-listScroll cb-listScrollOutput cb-scrollWrapOutput">
                           <section className="cb-list" aria-label={strings.outputTitle}>
                             {results.map((result) => {
-                              const previewTargetPath =
-                                result.ok && result.outputPath ? result.outputPath : result.inputPath;
-                              const previewTargetName = previewTargetPath
-                                .replace(/\\/g, "/")
-                                .split("/")
-                                .pop() ?? previewTargetPath;
+                              const inputFileName =
+                                result.inputPath.replace(/\\/g, "/").split("/").pop() ?? result.inputPath;
+                              const outputFileName = result.outputPath
+                                ? result.outputPath.replace(/\\/g, "/").split("/").pop() ?? result.outputPath
+                                : inputFileName;
+                              const primaryFileName =
+                                result.ok && result.outputPath ? outputFileName : inputFileName;
 
                               return (
                                 <button
@@ -641,18 +642,22 @@ function App() {
                                   key={result.inputPath}
                                   type="button"
                                   onClick={() => {
-                                    void openPreviewOrPath(previewTargetPath, previewTargetName);
+                                    if (result.ok && result.outputPath) {
+                                      void openPreviewOrPath(result.outputPath, outputFileName);
+                                      return;
+                                    }
+                                    void openPreviewOrPath(result.inputPath, inputFileName);
                                   }}
                                 >
                                   <div className="cb-minWidth0">
-                                    <div className="cb-ellipsis" title={result.inputPath}>
-                                      {result.inputPath.replace(/\\/g, "/").split("/").pop()}
+                                    <div className="cb-ellipsis" title={primaryFileName}>
+                                      {primaryFileName}
                                     </div>
-                                    <div className="cb-note cb-noteTop4">
-                                      {result.ok
-                                        ? `${strings.outputPathLabel} ${result.outputPath ?? "-"}`
-                                        : `${strings.errorLabel} ${result.error ?? strings.unknownError}`}
-                                    </div>
+                                    {!result.ok ? (
+                                      <div className="cb-note cb-noteTop4">
+                                        {strings.errorLabel} {result.error ?? strings.unknownError}
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <div className="cb-badge">
                                     {result.ok ? strings.resultSuccess : strings.resultFailure}
